@@ -1,0 +1,15 @@
+{
+  "name": "my-hono-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/*" 
+  ],
+  "scripts": {
+    "dev:backend": "bun run --cwd apps/server dev",
+    "dev:frontend": "bun run --cwd apps/client dev",
+    "build": "bun run --bun apps/server:build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2" 
+  }
+}
