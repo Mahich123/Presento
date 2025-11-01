@@ -1,0 +1,8 @@
+set -e  # Exit immediately if any command fails
+
+# Build client
+echo "🔨 Building client..."
+cd apps/client
+bun run build
+
+echo "✅ Build successful!"

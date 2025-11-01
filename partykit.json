@@ -1,0 +1,8 @@
+{
+  "name": "my-partykit-app",
+  "main": "party/index.ts",
+   "serve": {
+    "host": "0.0.0.0",
+    "port": 1999
+  }
+}
