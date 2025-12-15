@@ -16,11 +16,23 @@ function Signup() {
         try {
             const res = await authClient.signIn.social({
                 provider: 'github',
-                callbackURL: 'http://localhost:5173/dashboard'
+                callbackURL: import.meta.env.VITE_CLIENT_URL + '/dashboard'
             })
             console.log('res', res)
         } catch (error) {
             console.error('Github Sign in error:', error);
+        }
+    }
+
+    const handleGoogleAuth = async () => {
+        try {
+            const res = await authClient.signIn.social({
+                provider: 'google',
+                callbackURL: import.meta.env.VITE_CLIENT_URL + '/dashboard'
+            })
+            console.log('res', res)
+        } catch (error) {
+            console.error('Google Sign in error:', error);
         }
     }
 
@@ -34,7 +46,7 @@ function Signup() {
                 <div className="divider w-1/2"></div>
                 <div className="mt-10 flex gap-4 items-center justify-center bg-[#dedede8f] p-4 rounded-md">
                     <div>
-                        <button className="btn btn-lg">Google</button>
+                        <button className="btn btn-lg" onClick={handleGoogleAuth}>Google</button>
                     </div>
                     <div>
                         <button className="btn btn-lg" onClick={handleGithubAuth}>Github</button>

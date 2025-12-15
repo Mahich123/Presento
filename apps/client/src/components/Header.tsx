@@ -1,9 +1,14 @@
+import { useEffect, useState } from "react"
+import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
+import GoogleIcon from "../icons/GoogleIcon"
+import GithubIcon from "../icons/GithubIcon"
 
 export default function Header() {
 
     const { session, signOut } = userAuth()
 
+    const [accounts, setAccounts] = useState<{providerId: string}[]>([])
 
     const handleSignOut = async () => {
         try {
@@ -12,6 +17,30 @@ export default function Header() {
             console.error('Sign out error:', error)
         }
     }
+
+    const linkedAccounts = async () => {
+        const currentUserId = session?.user.id
+
+        if(!currentUserId) {
+            return "user not available"
+        }
+
+        const passUserId = await client.api.getallAccounts[':userId'].$get({
+            param: {userId: currentUserId}
+        })
+
+        const data = await passUserId.json()
+        
+        setAccounts(data)
+    }
+
+    useEffect(() => {
+        if(session?.user.id) {
+            linkedAccounts()
+        }  
+    },[])
+
+
     return (
         <>
             {
@@ -35,6 +64,20 @@ export default function Header() {
                                         <a className="justify-between">
                                             Profile
                                             <span className="badge badge-outline">{session?.user.name}</span>
+                                        </a>
+                                    </li>
+                                    <li>
+                                        <a>
+                                            Linked
+                                            {accounts.length === 0 && <span className="text-xs text-gray-400">None</span>}
+                                            <div className="flex items-center  justify-end gap-x-2 mt-1">
+                                                {accounts.map((acc, idx) => (
+                                                    <span key={idx} className="inline-flex items-center ">
+                                                        {acc.providerId === 'github' && <GithubIcon size={24} />}
+                                                        {acc.providerId === 'google' && <GoogleIcon size={24} />}
+                                                    </span>
+                                                ))}
+                                            </div>
                                         </a>
                                     </li>
                                     <li><a>Settings</a></li>

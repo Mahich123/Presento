@@ -1,32 +1,284 @@
+import { useEffect, useState } from "react"
+import { authClient } from "../lib/auth-client"
+import { client } from "../utils/honoClient"
+import userAuth from "../utils/userSession"
+import { nanoid } from "nanoid"
+import RoomContent from "./RoomContent"
+
 export default function CollaborationRoom() {
+    const [hasGoogle, setHasGoogle] = useState(false)
+    const [accessToken, setAccessToken] = useState<string | undefined>(undefined)
+    const { session } = userAuth()
+    const [roomId, setRoomId] = useState<string>("")
+    const [ , setRespData] = useState<string>("")
+    const [pickerApiLoaded, setPickerApiLoaded] = useState(false)
+    const [selectedFiles, setSelectedFiles] = useState<any[]>([])
+    const [showModal, setShowModal] = useState(false)
+    const [roomJoinId, setRoomJoinId] = useState<string>("")
+    const [isCreatingRoom, setIsCreatingRoom] = useState(false)
+
+    const handleConnect = async () => {
+        const auth = await authClient.signIn.social({
+            provider: 'google',
+            callbackURL: 'http://localhost:5173/dashboard'
+        })
+
+        console.log('auth', auth)
+    }
+
+    const handleCreateRoom = async () => {
+        const newRoomId = nanoid(5)
+        const token = session?.session.token
+
+        console.log('token', token)
+
+        if (!token) {
+            alert("You must be logged in to create a room.")
+            return
+        }
+
+        setIsCreatingRoom(true)
+
+        try {
+            const response = await fetch(`http://localhost:3001/api/party/${newRoomId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                credentials: 'include'
+            })
+
+            if (response.ok) {
+                const res = await response.text()
+                setRespData(res)
+                setRoomId(newRoomId)
+                localStorage.setItem('roomId', newRoomId)
+
+                setShowModal(true)
+            } else {
+                const errorText = await response.text()
+                console.error('Server error:', errorText)
+                alert("Failed to create room. Please try again.")
+            }
+        } catch (error) {
+            console.error('Error creating room:', error)
+            alert("Network error. Please try again.")
+        } finally {
+            setIsCreatingRoom(false)
+        }
+    }
+
+    const handleJoinRoom = () => {
+        if (roomJoinId.trim()) {
+            setRoomId(roomJoinId)
+            localStorage.setItem('roomId', roomJoinId)
+        } else {
+            alert("Please enter a valid room ID to join.")
+        }
+
+    }
+
+
+    const checkGoogleLinked = async () => {
+        const currentUserId = session?.user.id
+
+        if (!currentUserId) {
+            return "user not available"
+        }
+        const res = await client.api.getallAccounts[':userId'].$get({
+            param: { userId: session.user.id }
+        })
+        const data = await res.json()
+
+        console.log('data', data)
+
+        // setHasGoogle(false)
+        setHasGoogle(Array.isArray(data) && data.some((acc: { providerId: string }) => acc.providerId === 'google'))
+
+        setAccessToken(Array.isArray(data) ? (data.find((acc) => acc.providerId === 'google')?.accessToken ?? undefined) : undefined)
+    }
+
+    useEffect(() => {
+        const script = document.createElement('script');
+        script.src = 'https://apis.google.com/js/api.js';
+        script.onload = () => {
+            window.gapi.load('picker', () => {
+                setPickerApiLoaded(true);
+            });
+        };
+        document.body.appendChild(script);
+
+        return () => {
+            document.body.removeChild(script);
+        };
+    }, []);
+
+
+    useEffect(() => {
+        if (session?.user.id) {
+            checkGoogleLinked()
+        }
+    }, [session?.user?.id])
+
+
+    const openPicker = async () => {
+        if (!pickerApiLoaded || !accessToken) {
+            console.error('Picker not ready or no access token');
+            return;
+        }
+
+        const getToken = await client.api.linkGoogle.$get()
+
+
+        if (!getToken.ok) {
+            console.error('Failed to get fresh token from server');
+            setHasGoogle(false)
+            return;
+        }
+
+        const data = await getToken.json()
+
+        const newAccessToken = data.accessToken;
+
+        if (!newAccessToken) {
+            console.error('No access token received from server');
+            return;
+        }
+
+        const google = window.google;
+
+        const picker = new google.picker.PickerBuilder()
+
+            .addView(google.picker.ViewId.DOCS)
+            .addView(google.picker.ViewId.DOCS_IMAGES)
+
+            .setOAuthToken(newAccessToken)
+
+            .setDeveloperKey(import.meta.env.VITE_DEVELOPER_KEY)
+
+            .setCallback((data: any) => {
+                if (data.action === google.picker.Action.PICKED) {
+                    console.log('Picked files:', data.docs);
+                    setSelectedFiles(data.docs);
+                }
+            })
+
+
+            .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+
+            .setOrigin(window.location.origin)
+
+            .build();
+
+        picker.setVisible(true)
+
+        setShowModal(false)
+    };
+
+
+
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 ">
-            <div className="card bg-white w-full max-w-md shadow-lg rounded-2xl border-2 border-dashed border-gray-300 p-8">
-                <div className="flex flex-col items-center text-center space-y-6">
-                    <div className="w-16 h-16">
-                        <svg viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
-                            <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da" />
-                            <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47" />
-                            <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335" />
-                            <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d" />
-                            <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc" />
-                            <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00" />
-                        </svg>
+        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 relative">
+
+            {(selectedFiles.length > 0 || roomId) ? (
+
+                <>
+                    <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} />
+                </>
+            ) :
+
+                <div className="mockup-window border border-base-300 bg-[#F9FAFB]">
+                    <div className="flex items-center justify-center gap-4 border-t border-base-300 h-80 p-8">
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="text"
+                                placeholder="Enter room ID"
+                                value={roomJoinId}
+                                onChange={(e) => setRoomJoinId(e.target.value)}
+                                className="input input-bordered w-64"
+                            />
+                            <button
+                                onClick={handleJoinRoom}
+                                className="btn btn-primary disabled:btn-disabled"
+                            >
+                                Join Room
+                            </button>
+                        </div>
+
+                        <div className="divider divider-horizontal">OR</div>
+
+                        <button
+                            onClick={handleCreateRoom}
+                            disabled={isCreatingRoom}
+                            className="btn btn-secondary"
+                        >
+                            {isCreatingRoom ? (
+                                <span className="loading loading-spinner loading-sm"></span>
+                            ) : (
+                                'Create Room'
+                            )}
+                        </button>
+                    </div>
+                </div>
+            }
+
+            <dialog className={`modal ${showModal ? 'modal-open' : ''}`}>
+                <div className="modal-box max-w-2xl">
+                    <h3 className="font-bold text-lg mb-4">Room Created Successfully! 🎉</h3>
+
+                    <div className="space-y-4 mb-6">
+                        <p><strong>Room ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded">{roomId}</code></p>
+                        <p className="text-sm text-gray-600">Share this Room ID with your collaborators to join the session.</p>
                     </div>
 
+                    <div className="divider">Add Files to Collaborate</div>
 
-                    <h2 className="text-xl font-semibold text-gray-800">
-                        Connect your Google drive to<br />access files to show
-                    </h2>
+                    {!hasGoogle ? (
+                        <div className="text-center py-4">
+                            <p className="text-gray-600 mb-4">
+                                Connect your Google account to access Drive files for collaboration
+                            </p>
+                            <button
+                                onClick={handleConnect}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-medium text-base px-8 py-3 rounded-full transition-colors duration-200 cursor-pointer"
+                            >
+                                Connect Google Drive
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="text-center py-4">
+                            <div className="bg-green-100 text-green-800 p-3 rounded mb-4 inline-block">
+                                ✅ Google Drive Connected
+                            </div>
+                            <br />
+                            <button
+                                onClick={openPicker}
+                                disabled={!pickerApiLoaded}
+                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium text-base px-8 py-3 rounded-full transition-colors duration-200 cursor-pointer disabled:cursor-not-allowed"
+                            >
+                                {pickerApiLoaded ? '📁 Choose from Drive' : '⏳ Loading...'}
+                            </button>
+                        </div>
+                    )}
 
-
-                    <button
-                        className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium text-base px-12 py-3 rounded-full transition-colors duration-200"
-                    >
-                        Connect
-                    </button>
+                    <div className="modal-action">
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => {
+                                navigator.clipboard.writeText(roomId)
+                                alert('Room ID copied to clipboard!')
+                            }}
+                        >
+                            Copy Room ID
+                        </button>
+                        <button className="btn" onClick={() => setShowModal(false)}>Close</button>
+                    </div>
                 </div>
-            </div>
+            </dialog>
+
+
+
         </div>
     )
 }

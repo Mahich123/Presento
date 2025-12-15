@@ -15,8 +15,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-     <RouterProvider router={router} />
-  </StrictMode>,
-)
+async function enableMocking() {
+  if (import.meta.env.MODE !== 'development' || import.meta.env.VITE_USE_MOCK_API !== 'true') {
+    return
+  }
+
+  const { worker } = await import('./mocks/browser')
+
+  return worker.start({
+    onUnhandledRequest: 'bypass',
+  })
+}
+
+enableMocking().then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+       <RouterProvider router={router} />
+    </StrictMode>,
+  )
+})

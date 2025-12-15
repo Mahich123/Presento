@@ -14,13 +14,26 @@ export const auth = betterAuth({
       clientId: env.GITHUB_CLIENT_ID as string,
       clientSecret: env.GITHUB_CLIENT_SECRET as string,
       redirectURI: "http://localhost:3001/api/auth/callback/github",
-      prompt: "select_account"
-    }
-    // google: {
-    //   clientId: process.env.GOOGLE_CLIENT_ID as string,
-    //   clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-    //   redirectURI: "http://localhost:3001/api/auth/callback/google",
-    // },
+      prompt: "select_account",
+    },
+    google: {
+      clientId: env.GOOGLE_CLIENT_ID as string,
+      clientSecret: env.GOOGLE_CLIENT_SECRET as string,
+      redirectURI: env.GOOGLE_REDIRECT_URL as string,
+      scope: [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/drive.readonly",
+      ],
+      prompt: "consent",
+    },
+  },
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["github", "google"],
+    },
   },
   baseURL: "http://localhost:3001",
   trustedOrigins: ["http://localhost:5173"],
