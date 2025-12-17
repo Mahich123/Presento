@@ -1,18 +1,14 @@
-
-import { createClient } from '@libsql/client'
-import { drizzle } from 'drizzle-orm/libsql'
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
-import { env } from '../lib/env';
-
+import { env } from "../lib/env";
 
 const client = createClient({
   url: env.TURSO_DB_URL,
   authToken: env.TURSO_DB_AUTH_TOKEN,
-})
-export const db = drizzle(client)
-
-
+});
+export const db = drizzle(client);
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -87,3 +83,23 @@ export const verification = sqliteTable("verification", {
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
+
+export const room = sqliteTable("room", {
+  id: text("id").primaryKey(),
+  hostId: text("host_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  isActive: integer("is_active", { mode: "boolean" }).default(true).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+});
+
+export const roomParticipant = sqliteTable("room_participant", {
+  id: text("id").primaryKey(),
+  roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  joinedAt: integer("joined_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  leftAt: integer("left_at", { mode: "timestamp_ms" }),
+})
