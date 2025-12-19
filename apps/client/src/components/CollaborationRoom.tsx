@@ -4,33 +4,37 @@ import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
 import { nanoid } from "nanoid"
 import RoomContent from "./RoomContent"
+import Toast from "./Toast"
 
 export default function CollaborationRoom() {
     const [hasGoogle, setHasGoogle] = useState(false)
     const [accessToken, setAccessToken] = useState<string | undefined>(undefined)
     const { session } = userAuth()
     const [roomId, setRoomId] = useState<string>("")
-    const [ , setRespData] = useState<string>("")
+    const [, setRespData] = useState<string>("")
     const [pickerApiLoaded, setPickerApiLoaded] = useState(false)
     const [selectedFiles, setSelectedFiles] = useState<any[]>([])
     const [showModal, setShowModal] = useState(false)
     const [roomJoinId, setRoomJoinId] = useState<string>("")
     const [isCreatingRoom, setIsCreatingRoom] = useState(false)
+    const [roomRole, setRoomRole] = useState<'host' | 'viewer' | null>(null)
+    const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null)
+
+    const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+        setToast({ message, type })
+        setTimeout(() => setToast(null), 3000)
+    }
 
     const handleConnect = async () => {
         const auth = await authClient.signIn.social({
             provider: 'google',
             callbackURL: 'http://localhost:5173/dashboard'
         })
-
-        console.log('auth', auth)
     }
 
     const handleCreateRoom = async () => {
         const newRoomId = nanoid(5)
         const token = session?.session.token
-
-        console.log('token', token)
 
         if (!token) {
             alert("You must be logged in to create a room.")
@@ -46,15 +50,16 @@ export default function CollaborationRoom() {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                credentials: 'include'
+                credentials: 'include',
+                body: JSON.stringify({ isJoining: false })
             })
 
             if (response.ok) {
-                const res = await response.text()
-                setRespData(res)
+                const res = await response.json()
+                setRespData(JSON.stringify(res))
                 setRoomId(newRoomId)
                 localStorage.setItem('roomId', newRoomId)
-
+                setRoomRole(res.role || 'host')
                 setShowModal(true)
             } else {
                 const errorText = await response.text()
@@ -69,14 +74,49 @@ export default function CollaborationRoom() {
         }
     }
 
-    const handleJoinRoom = () => {
-        if (roomJoinId.trim()) {
-            setRoomId(roomJoinId)
-            localStorage.setItem('roomId', roomJoinId)
-        } else {
-            alert("Please enter a valid room ID to join.")
+    const handleJoinRoom = async () => {
+        if (!roomJoinId.trim()) {
+            showToast("Please enter a valid room ID to join.", 'error')
+            return
         }
 
+        const token = session?.session.token
+
+        if (!token) {
+            showToast("You must be logged in to join a room.", 'error')
+            return
+        }
+
+        try {
+            const response = await fetch(`http://localhost:3001/api/party/${roomJoinId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                credentials: 'include',
+                body: JSON.stringify({ isJoining: true })
+            })
+
+            if (response.ok) {
+                const res = await response.json()
+                setRoomId(roomJoinId)
+                setRoomRole(res.role || 'viewer')
+                localStorage.setItem('roomId', roomJoinId)
+            } else {
+                const errorText = await response.text()
+                console.error('Server error:', errorText)
+                try {
+                    const errorJson = JSON.parse(errorText)
+                    showToast(errorJson.error || "Failed to join room. Please try again.", 'error')
+                } catch {
+                    showToast(errorText || "Failed to join room. Please try again.", 'error')
+                }
+            }
+        } catch (error) {
+            console.error('Error joining room:', error)
+            showToast("Network error. Please try again.", 'error')
+        }
     }
 
 
@@ -184,7 +224,7 @@ export default function CollaborationRoom() {
             {(selectedFiles.length > 0 || roomId) ? (
 
                 <>
-                    <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} />
+                    <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} roomRole={roomRole} />
                 </>
             ) :
 
@@ -276,6 +316,13 @@ export default function CollaborationRoom() {
                     </div>
                 </div>
             </dialog>
+
+            {toast ? (
+                <Toast
+                    message={toast.message}
+                    onClose={() => setToast(null)}
+                />
+             ) : null}  
 
 
 

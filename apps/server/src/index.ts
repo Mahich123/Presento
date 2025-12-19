@@ -4,8 +4,8 @@ import { cors } from "hono/cors";
 import { env } from "./lib/env";
 import { google } from "googleapis";
 import { db } from "./db";
-import { account } from "./db/schema";
-import { and, eq } from "drizzle-orm";
+import { account, room, roomParticipant } from "./db/schema";
+import { and, eq, is } from "drizzle-orm";
 
 const oauth2Client = new google.auth.OAuth2(
   env.GOOGLE_CLIENT_ID,
@@ -35,12 +35,73 @@ const app = new Hono()
   .post("/party/:roomId", async (c) => {
     const roomId = c.req.param("roomId");
     const authHeader = c.req.header("Authorization");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    const body = await c.req.json();
+    const isJoining = body?.isJoining || false;
+    let userRole = "viewer";
+
+    try {
+      if (!isJoining) {
+        await db.insert(room).values({
+          id: roomId,
+          hostId: session.user.id,
+        });
+
+        await db.insert(roomParticipant).values({
+          roomId: roomId,
+          userId: session.user.id,
+          role: "host",
+        });
+        userRole = "host";
+      } else {
+        const existingRoom = await db
+          .select()
+          .from(room)
+          .where(eq(room.id, roomId))
+          .limit(1);
+
+        if (existingRoom.length === 0) {
+          return c.json({ error: "Room does not exist" }, 404);
+        }
+
+        if (!existingRoom[0].isActive) {
+          return c.json({ error: "Room is inactive" }, 403);
+        }
+
+        const alreadyParticipant = await db
+          .select()
+          .from(roomParticipant)
+          .where(
+            and(
+              eq(roomParticipant.roomId, roomId),
+              eq(roomParticipant.userId, session.user.id)
+            )
+          )
+          .limit(1);
+
+        if (alreadyParticipant.length === 0) {
+          await db.insert(roomParticipant).values({
+            roomId: roomId,
+            userId: session.user.id,
+            role: "viewer",
+          })
+          userRole = "viewer";
+        } else {
+          userRole = alreadyParticipant[0].role;
+        }
+      }
+    } catch (error) {
+      return c.json({ error: "Failed to create room" }, 500);
+    }
 
     const partyKitUrl = `${env.PARTYKIT_SERVER_URL}/parties/main/${roomId}`;
 
-    console.log("partykitUrl", partyKitUrl);
-
-    const body = await c.req.text();
+    const bodyText = JSON.stringify(body);
 
     const resp = await fetch(partyKitUrl, {
       method: "POST",
@@ -48,10 +109,10 @@ const app = new Hono()
         "Content-Type": "application/json",
         Authorization: authHeader || "",
       },
-      body: body,
+      body: bodyText,
     });
 
-    return new Response(await resp.text(), { status: resp.status });
+    return c.json({ role: userRole }, { status: resp.status });
   })
 
   .get("linkGoogle", async (c) => {
@@ -84,7 +145,6 @@ const app = new Hono()
 
     const tokenExpired = !tokenExpiry || now >= Number(tokenExpiry);
 
-    console.log("toeknExpired", tokenExpired);
 
     if (tokenExpired) {
       if (!refreshToken) {
@@ -141,9 +201,9 @@ const app = new Hono()
   })
 
   .get("slideimage/:presentationId/:pageObjectId", async (c) => {
-    const { presentationId, pageObjectId } = c.req.param()
+    const { presentationId, pageObjectId } = c.req.param();
 
-    const token = c.req.header("Authorization")?.replace("Bearer ", "")
+    const token = c.req.header("Authorization")?.replace("Bearer ", "");
     try {
       const res = await fetch(
         `https://slides.googleapis.com/v1/presentations/${presentationId}/pages/${pageObjectId}/thumbnail`,
@@ -152,25 +212,21 @@ const app = new Hono()
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
-          }
+          },
         }
-      )
+      );
 
-      if(!res.ok) {
-        throw new Error('Error fetching slide data');
+      if (!res.ok) {
+        throw new Error("Error fetching slide data");
       }
 
       const data = await res.json();
-
-      console.log('data',data)
 
       return c.json(data);
     } catch (error) {
       console.error("Error fetching slide content:", error);
     }
   });
-
-console.log(`Server is running on port ${env.PORT}`);
 
 export default {
   port: env.PORT,

@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 import { env } from "../lib/env";
+import { nanoid } from "nanoid";
 
 const client = createClient({
   url: env.TURSO_DB_URL,
@@ -94,7 +95,7 @@ export const room = sqliteTable("room", {
 });
 
 export const roomParticipant = sqliteTable("room_participant", {
-  id: text("id").primaryKey(),
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
   roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   role: text("role").notNull(),

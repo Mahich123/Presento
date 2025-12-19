@@ -103,6 +103,14 @@ export default class Server implements Party.Server {
             slides: slideContent,
           }),
         );
+      } else if (data.type === "slide_change") {
+        this.room.broadcast(
+          JSON.stringify({
+            type: "slide_change",
+            slideIndex: data.slideIndex,
+          }),
+          [sender.id]
+        );
       }
     } catch (error) {
 

@@ -5,7 +5,8 @@ import { client } from "../utils/honoClient";
 interface RoomContentProps {
   roomId: string;
   presentationId: string;
-  token: string
+  token: string;
+  roomRole: string;
 }
 
 interface MockSlideProps {
@@ -21,7 +22,7 @@ interface SlideDataResponse {
 }
 
 
-function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
+function RoomContent({ roomId, presentationId, token, roomRole }: RoomContentProps) {
 
   const [socketConnected, setSocketConnected] = useState(false);
   const [, setMessages] = useState<string[]>([]);
@@ -31,11 +32,9 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const useMockApi = import.meta.env.VITE_USE_MOCK_API === 'true'
 
-  console.log('slideImage', slideImage)
 
   useEffect(() => {
     if (useMockApi) {
-      console.log('Using mock WebSocket data')
       setSocketConnected(true)
       setTimeout(() => {
         const mockSlides: MockSlideProps[] = [
@@ -43,7 +42,6 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
           { pageId: 'mock-page-2', title: 'Slide 2' },
           { pageId: 'mock-page-3', title: 'Slide 3' }
         ]
-        console.log('Setting mock slide content:', mockSlides)
         setSlideContent(mockSlides)
       }, 500)
     }
@@ -54,7 +52,6 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
     room: roomId,
 
     onOpen() {
-      console.log('WebSocket connection established')
       setSocketConnected(true)
 
       ws.send(JSON.stringify({
@@ -69,11 +66,12 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
 
       if (data.type === 'slide_content') {
         setSlideContent(data.slides);
+      } else if (data.type === 'slide_change') {
+        setCurrentSlide(data.slideIndex);
       }
       setMessages((prevMessages) => [...prevMessages, e.data]);
     },
     onClose() {
-      console.log('WebSocket connection closed')
       setSocketConnected(false)
     }
   })
@@ -108,8 +106,14 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
   useEffect(() => {
     if (slideContent && slideContent.length > 0) {
       slideData()
+      if (roomRole === 'host' && ws) {
+        ws.send(JSON.stringify({
+          type: 'slide_change',
+          slideIndex: currentSlide
+        }))
+      }
     }
-  }, [currentSlide, slideContent, token])
+  }, [currentSlide, slideContent, token, roomRole, ws])
 
 
   return (
@@ -122,9 +126,21 @@ function RoomContent({ roomId, presentationId, token }: RoomContentProps) {
                 <img
                   src={slideImage}
                   className="w-full" />
-                <div className="absolute left-5 right-5 top-1/2 flex -translate-y-1/2 transform justify-between">
-                  <a href="#slide4" className="btn btn-circle">❮</a>
-                  <a href="#slide2" className="btn btn-circle" onClick={() => setCurrentSlide(prevSlide => prevSlide + 1)}>❯</a>
+                <div className={`absolute left-5 right-5 top-1/2 flex -translate-y-1/2 transform justify-between ${roomRole === 'viewer' ? 'hidden' : ''}`}>
+                  <button 
+                    className="btn btn-circle" 
+                    onClick={() => setCurrentSlide(prev => Math.max(0, prev - 1))}
+                    disabled={currentSlide === 0}
+                  >
+                    ❮
+                  </button>
+                  <button 
+                    className="btn btn-circle" 
+                    onClick={() => setCurrentSlide(prev => Math.min(slideContent.length - 1, prev + 1))}
+                    disabled={currentSlide >= slideContent.length - 1}
+                  >
+                    ❯
+                  </button>
                 </div>
               </div>
             </div>
