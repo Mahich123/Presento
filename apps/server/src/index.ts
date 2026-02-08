@@ -112,7 +112,7 @@ const app = new Hono()
       body: bodyText,
     });
 
-    return c.json({ role: userRole }, { status: resp.status });
+    return c.json({ role: userRole }, resp.status as 200);
   })
 
   .get("linkGoogle", async (c) => {
@@ -202,29 +202,167 @@ const app = new Hono()
 
   .get("slideimage/:presentationId/:pageObjectId", async (c) => {
     const { presentationId, pageObjectId } = c.req.param();
+    const roomId = c.req.query("roomId");
 
-    const token = c.req.header("Authorization")?.replace("Bearer ", "");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    // Get the room to find the host
+    let hostUserId = session.user.id;
+    
+    if (roomId) {
+      const existingRoom = await db
+        .select()
+        .from(room)
+        .where(eq(room.id, roomId))
+        .limit(1);
+
+      if (existingRoom.length > 0) {
+        hostUserId = existingRoom[0].hostId;
+      }
+    }
+
+    // Get fresh Google access token from the HOST's account
+    const googleAccount = await db
+      .select()
+      .from(account)
+      .where(
+        and(
+          eq(account.userId, hostUserId),
+          eq(account.providerId, "google")
+        )
+      )
+      .limit(1);
+
+    if (googleAccount.length === 0 || !googleAccount[0].accessToken) {
+      return c.json({ error: "Host's Google account not connected" }, 400);
+    }
+
+    let accessToken = googleAccount[0].accessToken;
+    const refreshToken = googleAccount[0].refreshToken;
+    const tokenExpiry = googleAccount[0].accessTokenExpiresAt;
+
+    const now = Date.now();
+    const tokenExpired = !tokenExpiry || now >= Number(tokenExpiry);
+
+    // Refresh token if expired
+    if (tokenExpired) {
+      if (!refreshToken) {
+        return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
+      }
+
+      oauth2Client.setCredentials({
+        refresh_token: refreshToken,
+      });
+
+      const { token } = await oauth2Client.getAccessToken();
+
+      if (!token) {
+        return c.json({ error: "Failed to refresh access token" }, 400);
+      }
+
+      await db
+        .update(account)
+        .set({
+          accessToken: token,
+          accessTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        })
+        .where(
+          and(
+            eq(account.userId, hostUserId),
+            eq(account.providerId, "google")
+          )
+        );
+
+      accessToken = token;
+    }
+
     try {
+      // Try Slides API thumbnail endpoint first
       const res = await fetch(
         `https://slides.googleapis.com/v1/presentations/${presentationId}/pages/${pageObjectId}/thumbnail`,
         {
           method: "GET",
           headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${accessToken}`,
           },
         }
       );
 
-      if (!res.ok) {
-        throw new Error("Error fetching slide data");
+      if (res.ok) {
+        const data = await res.json() as { contentUrl?: string };
+    
+        if (data?.contentUrl) {
+          const imageRes = await fetch(data.contentUrl, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          });
+
+          if (imageRes.ok) {
+            const imageBlob = await imageRes.arrayBuffer();
+            return new Response(imageBlob, {
+              headers: {
+                'Content-Type': 'image/png',
+                'Cache-Control': 'public, max-age=3600',
+                'Access-Control-Allow-Origin': '*',
+              },
+            });
+          }
+        }
       }
 
-      const data = await res.json();
+      // If Slides API fails with permission error, try Drive API export as fallback
+      const errorText = await res.text();
+      console.error("Slides API error:", errorText);
+      
+      if (res.status === 403) {
+        console.log("Attempting fallback to Drive API export...");
+        
+        // Get page index from slides data
+        const presentationRes = await fetch(
+          `https://slides.googleapis.com/v1/presentations/${presentationId}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
 
-      return c.json(data);
+        if (presentationRes.ok) {
+          const presentation = await presentationRes.json() as { slides: Array<{ objectId: string }> };
+
+          const pageIndex = presentation.slides.findIndex((slide: any) => slide.objectId === pageObjectId);
+          
+          if (pageIndex !== -1) {
+            // Use Drive API to export specific page as PNG and proxy it
+            const exportUrl = `https://www.googleapis.com/drive/v3/files/${presentationId}/export?mimeType=image/png&page=${pageIndex}`;
+            
+            const exportRes = await fetch(exportUrl, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+
+            if (exportRes.ok) {
+              const imageBlob = await exportRes.arrayBuffer();
+              return new Response(imageBlob, {
+                headers: {
+                  'Content-Type': 'image/png',
+                  'Cache-Control': 'public, max-age=3600',
+                  'Access-Control-Allow-Origin': '*',
+                },
+              });
+            }
+          }
+        }
+      }
+
+      return c.json({ error: "Error fetching slide data", details: errorText }, res.status as 500);
     } catch (error) {
       console.error("Error fetching slide content:", error);
+      return c.json({ error: "Internal server error", message: error instanceof Error ? error.message : String(error) }, 500);
     }
   });
 

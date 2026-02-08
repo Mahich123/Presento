@@ -5,10 +5,12 @@ import userAuth from "../utils/userSession"
 import { nanoid } from "nanoid"
 import RoomContent from "./RoomContent"
 import Toast from "./Toast"
+import { useNavigate } from "@tanstack/react-router"
 
 export default function CollaborationRoom() {
+    const navigate = useNavigate()
     const [hasGoogle, setHasGoogle] = useState(false)
-    const [accessToken, setAccessToken] = useState<string | undefined>(undefined)
+    const [accessToken, setAccessToken] = useState<string>('')
     const { session } = userAuth()
     const [roomId, setRoomId] = useState<string>("")
     const [, setRespData] = useState<string>("")
@@ -17,16 +19,17 @@ export default function CollaborationRoom() {
     const [showModal, setShowModal] = useState(false)
     const [roomJoinId, setRoomJoinId] = useState<string>("")
     const [isCreatingRoom, setIsCreatingRoom] = useState(false)
-    const [roomRole, setRoomRole] = useState<'host' | 'viewer' | null>(null)
+    const [roomRole, setRoomRole] = useState<'host' | 'viewer' | ''>('')
     const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null)
 
     const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
         setToast({ message, type })
         setTimeout(() => setToast(null), 3000)
     }
+    console.log('selectedFiles',selectedFiles)
 
     const handleConnect = async () => {
-        const auth = await authClient.signIn.social({
+        return await authClient.signIn.social({
             provider: 'google',
             callbackURL: 'http://localhost:5173/dashboard'
         })
@@ -44,7 +47,7 @@ export default function CollaborationRoom() {
         setIsCreatingRoom(true)
 
         try {
-            const response = await fetch(`http://localhost:3001/api/party/${newRoomId}`, {
+            const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/party/${newRoomId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -61,6 +64,7 @@ export default function CollaborationRoom() {
                 localStorage.setItem('roomId', newRoomId)
                 setRoomRole(res.role || 'host')
                 setShowModal(true)
+                navigate({ to: '/dashboard', search: { roomId: newRoomId } })
             } else {
                 const errorText = await response.text()
                 console.error('Server error:', errorText)
@@ -88,7 +92,7 @@ export default function CollaborationRoom() {
         }
 
         try {
-            const response = await fetch(`http://localhost:3001/api/party/${roomJoinId}`, {
+            const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/party/${roomJoinId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -103,6 +107,7 @@ export default function CollaborationRoom() {
                 setRoomId(roomJoinId)
                 setRoomRole(res.role || 'viewer')
                 localStorage.setItem('roomId', roomJoinId)
+                navigate({ to: '/dashboard', search: { roomId: roomJoinId } })
             } else {
                 const errorText = await response.text()
                 console.error('Server error:', errorText)
@@ -131,12 +136,9 @@ export default function CollaborationRoom() {
         })
         const data = await res.json()
 
-        console.log('data', data)
-
-        // setHasGoogle(false)
         setHasGoogle(Array.isArray(data) && data.some((acc: { providerId: string }) => acc.providerId === 'google'))
 
-        setAccessToken(Array.isArray(data) ? (data.find((acc) => acc.providerId === 'google')?.accessToken ?? undefined) : undefined)
+        setAccessToken(Array.isArray(data) ? (data.find((acc) => acc.providerId === 'google')?.accessToken ?? '') : '')
     }
 
     useEffect(() => {
@@ -186,6 +188,9 @@ export default function CollaborationRoom() {
             return;
         }
 
+        // Update the access token state with the fresh token
+        setAccessToken(newAccessToken);
+
         const google = window.google;
 
         const picker = new google.picker.PickerBuilder()
@@ -219,13 +224,10 @@ export default function CollaborationRoom() {
 
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 relative">
+        <div className={`flex flex-col min-h-screen bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
-
-                <>
-                    <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} roomRole={roomRole} />
-                </>
+                <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} sessionToken={session?.session.token ?? ''} roomRole={roomRole} />
             ) :
 
                 <div className="mockup-window border border-base-300 bg-[#F9FAFB]">

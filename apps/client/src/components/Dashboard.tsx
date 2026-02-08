@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import CollaborationRoom from "./CollaborationRoom";
 import type { AppType } from "../../../server/src"
 
-const client = hc<AppType>("http://192.168.1.9:3001/")
+const client = hc<AppType>(import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:4002/")
 
 export default function Dashboard() {
   const { session, isPending } = userAuth()

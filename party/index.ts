@@ -1,11 +1,15 @@
 import type * as Party from "partykit/server";
 
 export default class Server implements Party.Server {
+  slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
+  presentationId: string | null = null;
+  currentSlideIndex: number = 0;
+
   constructor(readonly room: Party.Room) {}
 
   async getSlideContent(presentationId: string, token: string) {
     try {
-      const slidesData = []
+      const slidesData: { pageNumber: number; imageUrl: string; pageId: string }[] = []
       const res = await fetch(
         `https://slides.googleapis.com/v1/presentations/${presentationId}`,
         {
@@ -15,9 +19,18 @@ export default class Server implements Party.Server {
 
       const data = await res.json();
 
-      // Fix: Remove the map() and just use forEach or a regular for loop
+      if (!res.ok) {
+        console.error("Google Slides API error:", data);
+        return [];
+      }
+
+      if (!data.slides || !Array.isArray(data.slides)) {
+        console.error("Invalid response from Google Slides API:", data);
+        return [];
+      }
+
       data.slides.forEach((slide: any, i: number) => {
-        const pageId = slide.objectId; // Use 'slide' not 'data.slides[i]'
+        const pageId = slide.objectId;
         const imageUrl = `https://www.googleapis.com/drive/v3/files/${presentationId}/export?mimeType=image/png&page=${i}`;
     
         slidesData.push({
@@ -32,78 +45,102 @@ export default class Server implements Party.Server {
       return slidesData;
     } catch (error) {
       console.error("Error fetching slide content:", error);
-      return []; // Return empty array on error
+      return [];
     }
 }
 
-  async onBeforeConnect(request: Party.Request) {
-    try {
-      const authHeader = request.headers.get("Authorization");
-      const token = authHeader?.replace("Bearer ", "");
-
-      if (!token) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-
-      const authRes = await fetch("http://localhost:3001/api/auth/session", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Cookie: `better-auth.session_token=${token}`,
-        },
-      });
-
-      const session = await authRes.json();
-
-      if (!session?.user) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-
-      console.log("request", request);
-
-      return request;
-    } catch (error) {
-      console.error("Authentication failed:", error);
-    }
-  }
-
   async onRequest(request: Party.Request) {
-    console.log("room id", this.room.id);
-    console.log(`Hello from partykit room: ${this.room.id}`);
     if (request.method === "POST") {
+      // Consume request body before responding to avoid workerd stream errors
+      await request.text();
       return new Response(`Room ${this.room.id} created/connected via POST`, {
         status: 200,
       });
     }
 
-    return new Response(`Hello from PartyKit room: ${this.room.id}`);
+    return new Response("Not found", { status: 404 });
+  }
+
+  broadcastUserCount() {
+    const connections = Array.from(this.room.getConnections());
+    this.room.broadcast(JSON.stringify({
+      type: "user_count",
+      count: connections.length
+    }));
   }
 
   onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
-    console.log(`New connection ${this.room.id}`);
+    const token = new URL(ctx.request.url).searchParams.get("token");
 
-    this.room.broadcast(`Howdy! ${conn.id}`);
+    if (!token) {
+      conn.close(4001, "Unauthorized");
+      return;
+    }
+
+    conn.setState({ token, userName: `User ${conn.id.slice(0, 4)}` });
+
+    console.log(`New connection to room ${this.room.id}`);
+    conn.send(JSON.stringify({ type: "connected", message: `Welcome ${conn.id}` }));
+
+    // Send current room state to new connection
+    if (this.slides.length > 0) {
+      conn.send(JSON.stringify({
+        type: "slide_content",
+        slides: this.slides,
+        presentationId: this.presentationId
+      }));
+      conn.send(JSON.stringify({
+        type: "slide_change",
+        slideIndex: this.currentSlideIndex
+      }));
+    }
+
+    // Broadcast updated user count
+    this.broadcastUserCount();
+  }
+
+  onClose(conn: Party.Connection) {
+    console.log(`Connection ${conn.id} closed`);
+    // Broadcast updated user count after disconnect
+    this.broadcastUserCount();
   }
 
   async onMessage(message: string, sender: Party.Connection) {
     console.log(`connection ${sender.id} sent message ${message}`);
     try {
       const data = JSON.parse(message);
+      console.log('data', data.type)
 
       if (data.type === "load_slide") {
+        if (!data.presentationId) return;
+
         const slideContent = await this.getSlideContent(
           data.presentationId,
           data.token
         );
 
-        console.log('slidecont',slideContent)
+        if (slideContent.length === 0) {
+          console.error("Failed to load slides - no content returned");
+          sender.send(JSON.stringify({
+            type: "error",
+            message: "Failed to load presentation slides"
+          }));
+          return;
+        }
+
+        this.slides = slideContent;
+        this.presentationId = data.presentationId;
+        this.currentSlideIndex = 0;
 
         this.room.broadcast(
           JSON.stringify({
             type: "slide_content",
             slides: slideContent,
+            presentationId: data.presentationId
           }),
         );
       } else if (data.type === "slide_change") {
+        this.currentSlideIndex = data.slideIndex;
         this.room.broadcast(
           JSON.stringify({
             type: "slide_change",
@@ -111,10 +148,22 @@ export default class Server implements Party.Server {
           }),
           [sender.id]
         );
+      } else if (data.type === "chat_message") {
+        const state = sender.state as { userName?: string } | null;
+        const userName = state?.userName || `User ${sender.id.slice(0, 4)}`;
+        this.room.broadcast(
+          JSON.stringify({
+            type: "chat_message",
+            id: `${sender.id}-${Date.now()}`,
+            userId: sender.id,
+            userName: userName,
+            message: data.message,
+            timestamp: Date.now()
+          })
+        );
       }
     } catch (error) {
-
-      this.room.broadcast(`${sender.id} says: ${message}`, [sender.id]);
+      console.error("Error processing message:", error);
     }
   }
 }

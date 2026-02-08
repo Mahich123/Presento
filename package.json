@@ -8,8 +8,8 @@
     "dev:backend": "bun run --cwd apps/server dev",
     "dev:frontend": "bun run --cwd apps/client dev",
     "dev:party": "bunx partykit dev party/index.ts",
-    "dev:all" : "concurrently \"bun run dev:backend\" \"bun run dev:frontend\" \"bun run dev:party\"",
-    "build": "bun run --bun apps/server:build",
+    "dev:all": "concurrently \"bun run dev:backend\" \"bun run dev:frontend\" \"bun run dev:party\"",
+    "build": "bun run --cwd apps/server build && bun run --cwd apps/client build",
     "prepare": "husky"
   },
   "devDependencies": {

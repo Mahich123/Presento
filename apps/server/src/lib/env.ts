@@ -9,6 +9,7 @@ export const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string(),
   GOOGLE_REDIRECT_URL: z.string(),
   PARTYKIT_SERVER_URL: z.string(),
+  BACKEND_BASE_URL: z.string(),
   PORT:z.string()
 })
 export type ENV = z.infer<typeof envSchema>

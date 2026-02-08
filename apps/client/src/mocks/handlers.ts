@@ -2,10 +2,10 @@ import { http, HttpResponse } from 'msw'
 
 export const handlers = [
   // Match the correct two-parameter pattern
-  http.get('http://localhost:3001/api/slideimage/:presentationId/:pageObjectId', ({ params }) => {
+  http.get(`${import.meta.env.VITE_BACKEND_API_URL}/slideimage/:presentationId/:pageObjectId`, ({ params }) => {
     console.log('MSW: Intercepting slideimage request with params:', params);
     
-    const { presentationId, pageObjectId } = params;
+    const { pageObjectId } = params;
     
     // Return mock text content instead of image
     return HttpResponse.json({
@@ -17,7 +17,7 @@ export const handlers = [
   }),
   
   // Also match if somehow only one param is being passed (debugging)
-  http.get('http://localhost:3001/api/slideimage/:pageObjectId', ({ params }) => {
+  http.get(`${import.meta.env.VITE_BACKEND_API_URL}/slideimage/:pageObjectId`, ({ params }) => {
     console.log('MSW: Intercepting slideimage request (single param) with params:', params);
     
     const { pageObjectId } = params;

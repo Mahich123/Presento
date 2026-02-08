@@ -13,7 +13,7 @@ export const auth = betterAuth({
     github: {
       clientId: env.GITHUB_CLIENT_ID as string,
       clientSecret: env.GITHUB_CLIENT_SECRET as string,
-      redirectURI: "http://localhost:3001/api/auth/callback/github",
+      redirectURI: `${env.BACKEND_BASE_URL}/api/auth/callback/github`,
       prompt: "select_account",
     },
     google: {
@@ -25,6 +25,7 @@ export const auth = betterAuth({
         "email",
         "profile",
         "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/presentations.readonly",
       ],
       prompt: "consent",
     },
@@ -35,6 +36,6 @@ export const auth = betterAuth({
       trustedProviders: ["github", "google"],
     },
   },
-  baseURL: "http://localhost:3001",
+  baseURL: env.BACKEND_BASE_URL!,
   trustedOrigins: ["http://localhost:5173"],
 });
