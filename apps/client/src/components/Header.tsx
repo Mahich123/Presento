@@ -41,7 +41,7 @@ export default function Header() {
 
 
     return (
-        <div className="navbar bg-base-100 shadow-sm md:px-42">
+        <div className="navbar bg-base-100 shadow-sm px-4 sm:px-8 lg:px-16">
             <div className="flex-1">
                 <a className="text-xl font-extrabold">Presento</a>
             </div>

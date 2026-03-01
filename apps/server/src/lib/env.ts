@@ -10,7 +10,8 @@ export const envSchema = z.object({
   GOOGLE_REDIRECT_URL: z.string(),
   PARTYKIT_SERVER_URL: z.string(),
   BACKEND_BASE_URL: z.string(),
-  PORT:z.string()
+  PORT:z.string(),
+  TRUSTED_ORIGINS: z.string().optional(),
 })
 export type ENV = z.infer<typeof envSchema>
 

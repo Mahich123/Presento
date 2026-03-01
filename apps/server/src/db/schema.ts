@@ -104,3 +104,18 @@ export const roomParticipant = sqliteTable("room_participant", {
     .notNull(),
   leftAt: integer("left_at", { mode: "timestamp_ms" }),
 })
+
+export const roomSlide = sqliteTable("room_slide", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  roomId: text("room_id").notNull().unique().references(() => room.id, { onDelete: "cascade" }),
+  hostName: text("host_name").notNull(),
+  presentationId: text("presentation_id").notNull(),
+  slides: text("slides").notNull(), // JSON serialized array of { pageId, title }
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$onUpdate(() => new Date())
+    .notNull(),
+})

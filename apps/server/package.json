@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@hono/eslint-config": "^2.0.3",
+    "@hono/zod-validator": "^0.7.6",
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "^0.44.7",
     "googleapis": "^164.1.0",

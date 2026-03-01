@@ -1,6 +1,7 @@
 import usePartySocket from "partysocket/react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import type PartySocket from "partysocket";
+import { client } from "../utils/honoClient";
 
 interface RoomContentProps {
   roomId: string;
@@ -110,8 +111,8 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
   const [chatInput, setChatInput] = useState('')
   const wsRef = useRef<PartySocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-
-  console.log('slideContent', slideContent)
+  const slideCacheRef = useRef<Map<string, string>>(new Map());
+  const [cachedPageIds, setCachedPageIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -126,14 +127,51 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
     setChatInput('')
   }
 
-  const handleSlideContent = (slides: MockSlideProps[], pid?: string) => {
+  const handleSlideContent = useCallback((slides: MockSlideProps[], pid?: string) => {
     setSlideContent(slides)
     if (pid) setActivePresentationId(pid)
-  }
+  }, [])
 
-  const handleChatMessage = (msg: ChatMessage) => {
+  const handleChatMessage = useCallback((msg: ChatMessage) => {
     setChatMessages(prev => [...prev, msg])
-  }
+  }, [])
+
+  // Save slide data to DB once and pre-fetch all slide images when slideContent arrives
+  useEffect(() => {
+    if (!slideContent.length || !activePresentationId || useMockApi) return
+
+    const cache = slideCacheRef.current
+
+    // Save to room_slide table (upsert — only meaningful data, runs once per load)
+    client.api["room-slide"].$post({
+      json: { roomId, presentationId: activePresentationId, slides: slideContent },
+    }).catch(err => console.error('Failed to save slides to DB:', err))
+
+    // Pre-fetch all slide images and store as blob URLs
+    slideContent.forEach(async (slide) => {
+      if (cache.has(slide.pageId)) return
+      try {
+        const res = await client.api.slideimage[":presentationId"][":pageObjectId"].$get({
+          param: { presentationId: activePresentationId, pageObjectId: slide.pageId },
+          query: { roomId },
+        })
+        if (res.ok) {
+          const blob = await res.blob()
+          cache.set(slide.pageId, URL.createObjectURL(blob))
+          setCachedPageIds(prev => new Set([...prev, slide.pageId]))
+        }
+      } catch (err) {
+        console.error(`Failed to pre-fetch slide ${slide.pageId}:`, err)
+      }
+    })
+  }, [slideContent, activePresentationId])
+
+  // Clean up blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      slideCacheRef.current.forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [])
 
   // Send load_slide message when presentationId becomes available
   useEffect(() => {
@@ -168,31 +206,35 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
     }
   }, [])
 
-  const slideData = async () => {
-    if (!slideContent || slideContent.length === 0 || !activePresentationId) {
-      return;
-    }
-    
-    const imageUrl = `${import.meta.env.VITE_BACKEND_API_URL}/slideimage/${activePresentationId}/${slideContent[currentSlide]?.pageId}?roomId=${roomId}`;
-    setSlideImage(imageUrl);
-  }
-
+  // Display the current slide — use cached blob URL if available, fall back to direct URL
   useEffect(() => {
-    if (slideContent && slideContent.length > 0) {
-      slideData()
-      if (roomRole === 'host' && wsRef.current) {
-        wsRef.current.send(JSON.stringify({
-          type: 'slide_change',
-          slideIndex: currentSlide
-        }))
-      }
+    if (!slideContent.length || !activePresentationId) return
+
+    const pageId = slideContent[currentSlide]?.pageId
+    if (!pageId) return
+
+    const cached = slideCacheRef.current.get(pageId)
+    if (cached) {
+      setSlideImage(cached)
+    } else {
+      // Fallback while cache is warming up (also used for mock API)
+      setSlideImage(
+        `/api/slideimage/${activePresentationId}/${pageId}?roomId=${roomId}`
+      )
     }
 
-  }, [currentSlide, slideContent, activePresentationId, token, roomRole])
+    if (roomRole === 'host' && wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: 'slide_change',
+        slideIndex: currentSlide,
+      }))
+    }
+  }, [currentSlide, slideContent, activePresentationId, roomRole, cachedPageIds])
 
+  console.log('socketConnected', socketConnected)
 
   return (
-    <div className="flex h-[calc(100vh-80px)] w-full gap-4 p-4">
+    <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-80px)] w-full gap-3 sm:gap-4 p-2 sm:p-4">
      
       {!useMockApi && roomId && sessionToken && (
         <WebSocketConnection
@@ -211,8 +253,8 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
 
       {socketConnected ? (
         <>
-          <div className="flex-1 flex flex-col bg-gray-900 rounded-lg overflow-hidden">
-            <div className="flex-1 relative flex items-center justify-center">
+          <div className="w-full aspect-video lg:aspect-auto lg:flex-1 flex flex-col bg-gray-900 rounded-lg overflow-hidden">
+            <div className="flex-1 relative flex items-center justify-center overflow-hidden">
               {slideImage ? (
                 <img
                   src={slideImage}
@@ -220,19 +262,19 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
                   className="max-w-full max-h-full object-contain"
                 />
               ) : (
-                <div className="text-gray-400">Loading slide...</div>
+                <div className="text-gray-400 text-sm sm:text-base">Loading slide...</div>
               )}
             
-              <div className={`absolute left-4 right-4 top-1/2 flex -translate-y-1/2 justify-between pointer-events-none ${roomRole === 'viewer' ? 'hidden' : ''}`}>
+              <div className={`absolute left-2 right-2 sm:left-4 sm:right-4 top-1/2 flex -translate-y-1/2 justify-between pointer-events-none ${roomRole === 'viewer' ? 'hidden' : ''}`}>
                 <button
-                  className="btn btn-circle btn-sm bg-white/80 hover:bg-white pointer-events-auto"
+                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto"
                   onClick={() => setCurrentSlide(prev => Math.max(0, prev - 1))}
                   disabled={currentSlide === 0}
                 >
                   ❮
                 </button>
                 <button
-                  className="btn btn-circle btn-sm bg-white/80 hover:bg-white pointer-events-auto"
+                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto"
                   onClick={() => setCurrentSlide(prev => Math.min(slideContent.length - 1, prev + 1))}
                   disabled={currentSlide >= slideContent.length - 1}
                 >
@@ -241,24 +283,24 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
               </div>
             </div>
          
-            <div className="bg-gray-800 text-white text-center py-2 text-sm">
+            <div className="bg-gray-800 text-white text-center py-1.5 sm:py-2 text-xs sm:text-sm">
               Slide {currentSlide + 1} of {slideContent.length}
             </div>
           </div>
 
         
-          <div className="w-80 flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm">
+          <div className="w-full lg:w-80 h-72 sm:h-80 lg:h-auto flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm">
             
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 rounded-t-lg">
-              <h3 className="font-semibold text-gray-800">Chat</h3>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200 bg-gray-50 rounded-t-lg shrink-0">
+              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">Chat</h3>
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
                 <span className="w-2 h-2 bg-green-500 rounded-full"></span>
                 <span>{userCount} {userCount === 1 ? 'user' : 'users'} online</span>
               </div>
             </div>
 
           
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 min-h-0">
               {chatMessages.length === 0 ? (
                 <p className="text-gray-400 text-center text-sm">No messages yet</p>
               ) : (
@@ -278,7 +320,7 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
             </div>
 
  
-            <div className="p-3 border-t border-gray-200">
+            <div className="p-2 sm:p-3 border-t border-gray-200 shrink-0">
               <div className="flex gap-2">
                 <input
                   type="text"

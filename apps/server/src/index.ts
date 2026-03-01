@@ -4,8 +4,10 @@ import { cors } from "hono/cors";
 import { env } from "./lib/env";
 import { google } from "googleapis";
 import { db } from "./db";
-import { account, room, roomParticipant } from "./db/schema";
-import { and, eq, is } from "drizzle-orm";
+import { account, room, roomParticipant, roomSlide, user } from "./db/schema";
+import { and, eq } from "drizzle-orm";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 
 const oauth2Client = new google.auth.OAuth2(
   env.GOOGLE_CLIENT_ID,
@@ -19,7 +21,7 @@ const app = new Hono()
   .use(
     "*",
     cors({
-      origin: "http://localhost:5173",
+      origin: env.TRUSTED_ORIGINS ? env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
       allowHeaders: ["Content-Type", "Authorization"],
       allowMethods: ["POST", "GET", "OPTIONS"],
       exposeHeaders: ["Content-Length"],
@@ -115,6 +117,46 @@ const app = new Hono()
     return c.json({ role: userRole }, resp.status as 200);
   })
 
+  .post("/room-slide", async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: "Not authenticated" }, 401);
+
+    const body = await c.req.json();
+    const { roomId, presentationId, slides } = body as {
+      roomId: string;
+      presentationId: string;
+      slides: { pageId: string; title: string }[];
+    };
+
+    if (!roomId || !presentationId || !slides) {
+      return c.json({ error: "Missing required fields" }, 400);
+    }
+
+    // Fetch host name by joining room → user
+    const roomData = await db
+      .select({ hostName: user.name })
+      .from(room)
+      .innerJoin(user, eq(room.hostId, user.id))
+      .where(eq(room.id, roomId))
+      .limit(1);
+
+    if (!roomData.length) return c.json({ error: "Room not found" }, 404);
+
+    const { hostName } = roomData[0];
+    const slidesJson = JSON.stringify(slides);
+
+    // Upsert: insert or update if roomId already has a record
+    await db
+      .insert(roomSlide)
+      .values({ roomId, hostName, presentationId, slides: slidesJson })
+      .onConflictDoUpdate({
+        target: roomSlide.roomId,
+        set: { hostName, presentationId, slides: slidesJson, updatedAt: new Date() },
+      });
+
+    return c.json({ success: true, hostName });
+  })
+
   .get("linkGoogle", async (c) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
@@ -200,9 +242,11 @@ const app = new Hono()
     return c.json(accountProviders);
   })
 
-  .get("slideimage/:presentationId/:pageObjectId", async (c) => {
+  .get("slideimage/:presentationId/:pageObjectId",
+    zValidator("query", z.object({ roomId: z.string().optional() })),
+    async (c) => {
     const { presentationId, pageObjectId } = c.req.param();
-    const roomId = c.req.query("roomId");
+    const { roomId } = c.req.valid("query");
 
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
@@ -369,6 +413,7 @@ const app = new Hono()
 export default {
   port: env.PORT,
   fetch: app.fetch,
+  hostname: '0.0.0.0'
 };
 
 export type AppType = typeof app;

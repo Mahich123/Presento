@@ -31,7 +31,7 @@ export default function CollaborationRoom() {
     const handleConnect = async () => {
         return await authClient.signIn.social({
             provider: 'google',
-            callbackURL: 'http://localhost:5173/dashboard'
+            callbackURL: `${window.location.origin}/dashboard`
         })
     }
 
@@ -224,36 +224,36 @@ export default function CollaborationRoom() {
 
 
     return (
-        <div className={`flex flex-col min-h-screen bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center'}`}>
+        <div className={`flex flex-col min-h-screen bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
                 <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} sessionToken={session?.session.token ?? ''} roomRole={roomRole} />
             ) :
 
-                <div className="mockup-window border border-base-300 bg-[#F9FAFB]">
-                    <div className="flex items-center justify-center gap-4 border-t border-base-300 h-80 p-8">
-                        <div className="flex items-center gap-3">
+                <div className="mockup-window border border-base-300 bg-[#F9FAFB] w-full max-w-lg">
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-2 border-t border-base-300 p-6 sm:p-8">
+                        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
                             <input
                                 type="text"
                                 placeholder="Enter room ID"
                                 value={roomJoinId}
                                 onChange={(e) => setRoomJoinId(e.target.value)}
-                                className="input input-bordered w-64"
+                                className="input input-bordered w-full sm:w-64"
                             />
                             <button
                                 onClick={handleJoinRoom}
-                                className="btn btn-primary disabled:btn-disabled"
+                                className="btn btn-primary disabled:btn-disabled w-full sm:w-auto"
                             >
                                 Join Room
                             </button>
                         </div>
 
-                        <div className="divider divider-horizontal">OR</div>
+                        <div className="divider sm:divider-horizontal my-1 sm:my-0">OR</div>
 
                         <button
                             onClick={handleCreateRoom}
                             disabled={isCreatingRoom}
-                            className="btn btn-secondary"
+                            className="btn btn-secondary w-full sm:w-auto"
                         >
                             {isCreatingRoom ? (
                                 <span className="loading loading-spinner loading-sm"></span>
@@ -266,47 +266,47 @@ export default function CollaborationRoom() {
             }
 
             <dialog className={`modal ${showModal ? 'modal-open' : ''}`}>
-                <div className="modal-box max-w-2xl">
-                    <h3 className="font-bold text-lg mb-4">Room Created Successfully! 🎉</h3>
+                <div className="modal-box w-full max-w-sm sm:max-w-xl md:max-w-2xl mx-4">
+                    <h3 className="font-bold text-base sm:text-lg mb-4">Room Created Successfully! 🎉</h3>
 
                     <div className="space-y-4 mb-6">
-                        <p><strong>Room ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded">{roomId}</code></p>
-                        <p className="text-sm text-gray-600">Share this Room ID with your collaborators to join the session.</p>
+                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded break-all">{roomId}</code></p>
+                        <p className="text-xs sm:text-sm text-gray-600">Share this Room ID with your collaborators to join the session.</p>
                     </div>
 
                     <div className="divider">Add Files to Collaborate</div>
 
                     {!hasGoogle ? (
                         <div className="text-center py-4">
-                            <p className="text-gray-600 mb-4">
+                            <p className="text-gray-600 mb-4 text-sm sm:text-base">
                                 Connect your Google account to access Drive files for collaboration
                             </p>
                             <button
                                 onClick={handleConnect}
-                                className="bg-blue-600 hover:bg-blue-700 text-white font-medium text-base px-8 py-3 rounded-full transition-colors duration-200 cursor-pointer"
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm sm:text-base px-6 sm:px-8 py-2.5 sm:py-3 rounded-full transition-colors duration-200 cursor-pointer w-full sm:w-auto"
                             >
                                 Connect Google Drive
                             </button>
                         </div>
                     ) : (
                         <div className="text-center py-4">
-                            <div className="bg-green-100 text-green-800 p-3 rounded mb-4 inline-block">
+                            <div className="bg-green-100 text-green-800 p-3 rounded mb-4 inline-block text-sm sm:text-base">
                                 ✅ Google Drive Connected
                             </div>
                             <br />
                             <button
                                 onClick={openPicker}
                                 disabled={!pickerApiLoaded}
-                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium text-base px-8 py-3 rounded-full transition-colors duration-200 cursor-pointer disabled:cursor-not-allowed"
+                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium text-sm sm:text-base px-6 sm:px-8 py-2.5 sm:py-3 rounded-full transition-colors duration-200 cursor-pointer disabled:cursor-not-allowed w-full sm:w-auto"
                             >
                                 {pickerApiLoaded ? '📁 Choose from Drive' : '⏳ Loading...'}
                             </button>
                         </div>
                     )}
 
-                    <div className="modal-action">
+                    <div className="modal-action flex-col sm:flex-row gap-2">
                         <button
-                            className="btn btn-primary"
+                            className="btn btn-primary w-full sm:w-auto"
                             onClick={() => {
                                 navigator.clipboard.writeText(roomId)
                                 alert('Room ID copied to clipboard!')
@@ -314,7 +314,7 @@ export default function CollaborationRoom() {
                         >
                             Copy Room ID
                         </button>
-                        <button className="btn" onClick={() => setShowModal(false)}>Close</button>
+                        <button className="btn w-full sm:w-auto" onClick={() => setShowModal(false)}>Close</button>
                     </div>
                 </div>
             </dialog>
