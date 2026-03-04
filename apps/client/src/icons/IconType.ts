@@ -1,6 +1,6 @@
 export interface IconPropsType {
   size?: number
-  stroke?: number
+  stroke?: string
   className?: string
   fill?: string
 }

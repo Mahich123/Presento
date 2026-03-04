@@ -52,7 +52,7 @@ export default function Header() {
                             <div className="w-10 rounded-full">
                                 <img
                                     alt="User avatar"
-                                    src={session?.user.image} />
+                                    src={session?.user.image ?? undefined} />
                             </div>
                         </div>
                         <ul

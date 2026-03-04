@@ -4,6 +4,10 @@ export default class Server implements Party.Server {
   slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
   presentationId: string | null = null;
   currentSlideIndex: number = 0;
+  hostLeftTimeout: ReturnType<typeof setTimeout> | null = null;
+  hostLeftTickInterval: ReturnType<typeof setInterval> | null = null;
+  hostLeftEndsAt: number | null = null;
+  readonly hostGraceMs = 90_000;
 
   constructor(readonly room: Party.Room) {}
 
@@ -69,7 +73,158 @@ export default class Server implements Party.Server {
     }));
   }
 
-  onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+  async resolveUserNameFromSessionToken(token: string) {
+    const backendBaseUrl =
+      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
+        ?.BACKEND_BASE_URL || "http://localhost:4002";
+
+    try {
+      const response = await fetch(`${backendBaseUrl}/api/party/session-user?roomId=${encodeURIComponent(this.room.id)}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) return null;
+      const data = await response.json() as { userId?: string; userName?: string; role?: "host" | "viewer" | null };
+      return {
+        userId: data.userId,
+        userName: data.userName,
+        role: data.role ?? undefined,
+      };
+    } catch (error) {
+      console.error("Failed to resolve user from session token:", error);
+      return null;
+    }
+  }
+
+  getBackendBaseUrl() {
+    return (
+      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
+        ?.BACKEND_BASE_URL || "http://localhost:4002"
+    );
+  }
+
+  async sendPresenceEvent(token: string, event: "connect" | "disconnect") {
+    try {
+      await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/presence`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ event }),
+      });
+    } catch (error) {
+      console.error(`Failed to send presence ${event} for room ${this.room.id}:`, error);
+    }
+  }
+
+  async closeRoomInBackend(token: string) {
+    try {
+      await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/close`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (error) {
+      console.error(`Failed to close room ${this.room.id} in backend:`, error);
+    }
+  }
+
+  getConnectionsWithState() {
+    return Array.from(this.room.getConnections()).map((conn) => ({
+      conn,
+      state: (conn.state as { userId?: string; userName?: string; role?: "host" | "viewer"; token?: string } | null) ?? null,
+    }));
+  }
+
+  hasConnectedHost() {
+    return this.getConnectionsWithState().some(({ state }) => state?.role === "host");
+  }
+
+  broadcastHostTimerTick() {
+    if (!this.hostLeftEndsAt) return;
+    const remainingMs = Math.max(0, this.hostLeftEndsAt - Date.now());
+    this.room.broadcast(
+      JSON.stringify({
+        type: "host_left_tick",
+        remainingMs,
+        endsAt: this.hostLeftEndsAt,
+      })
+    );
+  }
+
+  clearHostLeftTimer(notifyViewers = false) {
+    if (this.hostLeftTimeout) {
+      clearTimeout(this.hostLeftTimeout);
+      this.hostLeftTimeout = null;
+    }
+    if (this.hostLeftTickInterval) {
+      clearInterval(this.hostLeftTickInterval);
+      this.hostLeftTickInterval = null;
+    }
+    this.hostLeftEndsAt = null;
+    if (notifyViewers) {
+      this.room.broadcast(JSON.stringify({ type: "host_returned" }));
+    }
+  }
+
+  async forceCloseRoom(reason: "no_participants" | "host_timeout") {
+    const connectionWithToken = this.getConnectionsWithState().find(({ state }) => !!state?.token);
+    if (connectionWithToken?.state?.token) {
+      await this.closeRoomInBackend(connectionWithToken.state.token);
+    }
+    this.room.broadcast(JSON.stringify({ type: "room_closed", reason }));
+    for (const connection of this.room.getConnections()) {
+      connection.close(4002, reason);
+    }
+  }
+
+  async updateRoomLifecycle() {
+    const allConnections = this.getConnectionsWithState();
+    const totalConnections = allConnections.length;
+
+    if (totalConnections === 0) {
+      this.clearHostLeftTimer();
+      return;
+    }
+
+    const hostConnected = this.hasConnectedHost();
+
+    if (hostConnected) {
+      const hadTimer = !!this.hostLeftEndsAt;
+      this.clearHostLeftTimer(hadTimer);
+      return;
+    }
+
+    if (this.hostLeftEndsAt) {
+      return;
+    }
+
+    this.hostLeftEndsAt = Date.now() + this.hostGraceMs;
+    this.room.broadcast(
+      JSON.stringify({
+        type: "host_left",
+        endsAt: this.hostLeftEndsAt,
+        remainingMs: this.hostGraceMs,
+      })
+    );
+    this.broadcastHostTimerTick();
+
+    this.hostLeftTickInterval = setInterval(() => {
+      this.broadcastHostTimerTick();
+    }, 1000);
+
+    this.hostLeftTimeout = setTimeout(async () => {
+      this.clearHostLeftTimer();
+      await this.forceCloseRoom("host_timeout");
+    }, this.hostGraceMs);
+  }
+
+  async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const token = new URL(ctx.request.url).searchParams.get("token");
 
     if (!token) {
@@ -77,7 +232,20 @@ export default class Server implements Party.Server {
       return;
     }
 
-    conn.setState({ token, userName: `User ${conn.id.slice(0, 4)}` });
+    const userInfo = await this.resolveUserNameFromSessionToken(token);
+    conn.setState({
+      token,
+      userId: userInfo?.userId,
+      userName: userInfo?.userName || `User ${conn.id.slice(0, 4)}`,
+      role: userInfo?.role || "viewer",
+    });
+
+    const sameUserConnections = this.getConnectionsWithState().filter(
+      ({ state }) => state?.userId && state?.userId === userInfo?.userId
+    );
+    if (userInfo?.userId && sameUserConnections.length === 1) {
+      await this.sendPresenceEvent(token, "connect");
+    }
 
     console.log(`New connection to room ${this.room.id}`);
     conn.send(JSON.stringify({ type: "connected", message: `Welcome ${conn.id}` }));
@@ -97,12 +265,23 @@ export default class Server implements Party.Server {
 
     // Broadcast updated user count
     this.broadcastUserCount();
+    await this.updateRoomLifecycle();
   }
 
-  onClose(conn: Party.Connection) {
+  async onClose(conn: Party.Connection) {
     console.log(`Connection ${conn.id} closed`);
+    const state = (conn.state as { userId?: string; token?: string } | null) ?? null;
+    const sameUserStillConnected = this.getConnectionsWithState().some(
+      ({ state: connectedState }) =>
+        !!state?.userId && connectedState?.userId === state.userId
+    );
+    if (state?.token && !sameUserStillConnected) {
+      await this.sendPresenceEvent(state.token, "disconnect");
+    }
+
     // Broadcast updated user count after disconnect
     this.broadcastUserCount();
+    await this.updateRoomLifecycle();
   }
 
   async onMessage(message: string, sender: Party.Connection) {
@@ -149,13 +328,13 @@ export default class Server implements Party.Server {
           [sender.id]
         );
       } else if (data.type === "chat_message") {
-        const state = sender.state as { userName?: string } | null;
+        const state = sender.state as { userId?: string; userName?: string } | null;
         const userName = state?.userName || `User ${sender.id.slice(0, 4)}`;
         this.room.broadcast(
           JSON.stringify({
             type: "chat_message",
             id: `${sender.id}-${Date.now()}`,
-            userId: sender.id,
+            userId: state?.userId || sender.id,
             userName: userName,
             message: data.message,
             timestamp: Date.now()

@@ -9,6 +9,10 @@ interface RoomContentProps {
   token: string;
   sessionToken: string;
   roomRole: string;
+  onRequestLeave: () => void;
+  onRoomClosed: (reason?: string) => void;
+  onOpenPicker?: () => void;
+  pickerReady?: boolean;
 }
 
 interface MockSlideProps {
@@ -36,6 +40,10 @@ function WebSocketConnection({
   onSlideChange,
   onUserCount,
   onChatMessage,
+  onHostLeft,
+  onHostLeftTick,
+  onHostReturned,
+  onRoomClosed,
   wsRef
 }: {
   roomId: string;
@@ -47,6 +55,10 @@ function WebSocketConnection({
   onSlideChange: (index: number) => void;
   onUserCount: (count: number) => void;
   onChatMessage: (msg: ChatMessage) => void;
+  onHostLeft: (payload: { remainingMs: number; endsAt: number }) => void;
+  onHostLeftTick: (payload: { remainingMs: number; endsAt: number }) => void;
+  onHostReturned: () => void;
+  onRoomClosed: (reason?: string) => void;
   wsRef: { current: PartySocket | null };
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
@@ -80,6 +92,20 @@ function WebSocketConnection({
         onUserCount(data.count);
       } else if (data.type === 'chat_message') {
         onChatMessage(data);
+      } else if (data.type === 'host_left') {
+        onHostLeft({
+          remainingMs: Number(data.remainingMs ?? 0),
+          endsAt: Number(data.endsAt ?? Date.now())
+        })
+      } else if (data.type === 'host_left_tick') {
+        onHostLeftTick({
+          remainingMs: Number(data.remainingMs ?? 0),
+          endsAt: Number(data.endsAt ?? Date.now())
+        })
+      } else if (data.type === 'host_returned') {
+        onHostReturned()
+      } else if (data.type === 'room_closed') {
+        onRoomClosed(data.reason)
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
       }
@@ -99,7 +125,17 @@ function WebSocketConnection({
   return null;
 }
 
-function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: RoomContentProps) {
+function RoomContent({
+  roomId,
+  presentationId,
+  token,
+  sessionToken,
+  roomRole,
+  onRequestLeave,
+  onRoomClosed,
+  onOpenPicker,
+  pickerReady = false
+}: RoomContentProps) {
 
   const [socketConnected, setSocketConnected] = useState(false);
   const [slideContent, setSlideContent] = useState<MockSlideProps[]>([]);
@@ -109,6 +145,12 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
   const [userCount, setUserCount] = useState(1)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [hostLeftRemainingMs, setHostLeftRemainingMs] = useState<number | null>(null)
+  const [hostLeftTotalMs, setHostLeftTotalMs] = useState<number | null>(null)
+  const chatOpenRef = useRef<boolean>(false)
   const wsRef = useRef<PartySocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const slideCacheRef = useRef<Map<string, string>>(new Map());
@@ -117,6 +159,15 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages])
+
+  useEffect(() => {
+    chatOpenRef.current = chatOpen
+    if (chatOpen) setUnreadCount(0)
+  }, [chatOpen])
+
+  useEffect(() => {
+    if (!chatCollapsed) setUnreadCount(0)
+  }, [chatCollapsed])
 
   const handleSendChat = () => {
     if (!chatInput.trim() || !wsRef.current) return
@@ -133,8 +184,26 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
   }, [])
 
   const handleChatMessage = useCallback((msg: ChatMessage) => {
+    console.log('msg', msg)
     setChatMessages(prev => [...prev, msg])
+    if (!chatOpenRef.current) setUnreadCount(prev => prev + 1)
   }, [])
+
+  const handleLeaveRoom = useCallback(() => {
+    onRequestLeave()
+  }, [onRequestLeave])
+
+  const formatTimer = (remainingMs: number) => {
+    const totalSeconds = Math.ceil(Math.max(0, remainingMs) / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  }
+
+  const getTimerProgress = () => {
+    if (!hostLeftRemainingMs || !hostLeftTotalMs || hostLeftTotalMs <= 0) return 0
+    return Math.max(0, Math.min(1, hostLeftRemainingMs / hostLeftTotalMs))
+  }
 
   // Save slide data to DB once and pre-fetch all slide images when slideContent arrives
   useEffect(() => {
@@ -234,7 +303,7 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
   console.log('socketConnected', socketConnected)
 
   return (
-    <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-80px)] w-full gap-3 sm:gap-4 p-2 sm:p-4">
+    <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
      
       {!useMockApi && roomId && sessionToken && (
         <WebSocketConnection
@@ -247,14 +316,83 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
           onSlideChange={setCurrentSlide}
           onUserCount={setUserCount}
           onChatMessage={handleChatMessage}
+          onHostLeft={({ remainingMs }) => {
+            if (roomRole === 'viewer') {
+              setHostLeftRemainingMs(remainingMs)
+              setHostLeftTotalMs(remainingMs)
+            }
+          }}
+          onHostLeftTick={({ remainingMs }) => {
+            if (roomRole === 'viewer') {
+              setHostLeftRemainingMs(remainingMs)
+              setHostLeftTotalMs(prev => prev ?? remainingMs)
+            }
+          }}
+          onHostReturned={() => {
+            setHostLeftRemainingMs(null)
+            setHostLeftTotalMs(null)
+          }}
+          onRoomClosed={(reason) => onRoomClosed(reason)}
           wsRef={wsRef}
         />
       )}
 
       {socketConnected ? (
         <>
-          <div className="w-full aspect-video lg:aspect-auto lg:flex-1 flex flex-col bg-gray-900 rounded-lg overflow-hidden">
+          <div className="w-full flex-1 lg:aspect-auto flex flex-col bg-gray-900 overflow-hidden">
             <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+              {roomRole === 'viewer' && hostLeftRemainingMs !== null && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <div className="flex flex-col items-center gap-3 select-none">
+                    <p className="text-amber-300 font-semibold text-xs tracking-[0.2em] uppercase">
+                      Host Disconnected
+                    </p>
+                    <div className="relative">
+                      <svg
+                        width="160" height="160" viewBox="0 0 160 160"
+                        className="-rotate-90"
+                      >
+                        {/* Outer dark circle */}
+                        <circle cx="80" cy="80" r="76" fill="#1a1f2e" />
+                        {/* Track ring */}
+                        <circle
+                          cx="80" cy="80" r="66"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.08)"
+                          strokeWidth="8"
+                        />
+                        {/* Progress ring */}
+                        <circle
+                          cx="80" cy="80" r="66"
+                          fill="none"
+                          stroke="#f87171"
+                          strokeWidth="8"
+                          strokeLinecap="round"
+                          strokeDasharray={`${2 * Math.PI * 66}`}
+                          strokeDashoffset={`${2 * Math.PI * 66 * (1 - getTimerProgress())}`}
+                          style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+                        <span className="text-white text-3xl font-bold tabular-nums tracking-widest leading-none">
+                          {formatTimer(hostLeftRemainingMs)}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-white/60 text-xs tracking-wide">
+                      Waiting for host to return…
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="absolute top-3 right-3 z-20 hidden lg:block">
+                <button
+                  className="btn btn-sm btn-error text-white"
+                  onClick={handleLeaveRoom}
+                >
+                  Leave Room
+                </button>
+              </div>
               {slideImage ? (
                 <img
                   src={slideImage}
@@ -288,18 +426,114 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
             </div>
           </div>
 
-        
-          <div className="w-full lg:w-80 h-72 sm:h-80 lg:h-auto flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm">
-            
-            <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200 bg-gray-50 rounded-t-lg shrink-0">
-              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">Chat</h3>
-              <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
-                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                <span>{userCount} {userCount === 1 ? 'user' : 'users'} online</span>
-              </div>
+          {/* Mobile leave room button — shown above chat toggle */}
+          <button
+            className="lg:hidden fixed bottom-20 right-5 z-40 btn btn-error btn-circle shadow-xl"
+            onClick={handleLeaveRoom}
+            aria-label="Leave room"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
+
+          {/* Mobile chat toggle button */}
+          <button
+            className="lg:hidden fixed bottom-5 right-5 z-40 btn btn-primary btn-circle shadow-xl"
+            onClick={() => setChatOpen(true)}
+            aria-label="Open chat"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 16c0 1.1-.9 2-2 2H7l-4 4V6a2 2 0 012-2h14a2 2 0 012 2v10z" />
+            </svg>
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Backdrop */}
+          {chatOpen && (
+            <div
+              className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+              onClick={() => setChatOpen(false)}
+            />
+          )}
+
+          {/* Desktop expand button (shown when chat is collapsed) */}
+          {chatCollapsed && (
+            <div className="hidden lg:flex flex-col items-center gap-1 self-start mt-2 relative">
+              <button
+                className="p-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-colors text-gray-600"
+                onClick={() => setChatCollapsed(false)}
+                aria-label="Open chat"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Chat panel — bottom sheet on mobile, sidebar on desktop */}
+          <div className={`
+            flex flex-col bg-white
+            fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl h-dvh shadow-2xl
+            transition-transform duration-300 ease-in-out
+            lg:static lg:w-80 lg:h-auto lg:max-h-none lg:rounded-lg lg:border lg:border-gray-200 lg:shadow-sm lg:z-auto lg:translate-y-0
+            ${chatOpen ? 'translate-y-0' : 'translate-y-full'}
+            ${chatCollapsed ? 'lg:hidden' : ''}
+          `}>
+            {/* Drag handle (mobile only) */}
+            <div className="lg:hidden flex justify-center pt-2 pb-1 shrink-0">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
             </div>
 
-          
+            <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200 bg-gray-50 rounded-t-2xl lg:rounded-t-lg shrink-0">
+              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">Chat</h3>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  <span>{userCount} {userCount === 1 ? 'user' : 'users'} online</span>
+                </div>
+                {/* Desktop collapse button */}
+                <button
+                  className="hidden lg:flex p-1.5 rounded hover:bg-gray-200 transition-colors text-gray-500 hover:text-gray-700"
+                  onClick={() => setChatCollapsed(true)}
+                  aria-label="Hide chat"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                {/* Mobile close button */}
+                <button
+                  className="lg:hidden btn btn-ghost btn-xs btn-circle text-gray-500"
+                  onClick={() => setChatOpen(false)}
+                  aria-label="Close chat"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="px-3 sm:px-4 py-2 border-b border-gray-100 shrink-0">
+              <button
+                className="btn btn-sm btn-outline w-full"
+                onClick={onOpenPicker}
+                disabled={!onOpenPicker || !pickerReady}
+              >
+                {pickerReady ? "Choose from Drive" : "Drive Picker Loading..."}
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 min-h-0">
               {chatMessages.length === 0 ? (
                 <p className="text-gray-400 text-center text-sm">No messages yet</p>
@@ -319,7 +553,6 @@ function RoomContent({ roomId, presentationId, token, sessionToken, roomRole }: 
               <div ref={chatEndRef} />
             </div>
 
- 
             <div className="p-2 sm:p-3 border-t border-gray-200 shrink-0">
               <div className="flex gap-2">
                 <input

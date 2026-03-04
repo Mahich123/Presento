@@ -4,8 +4,8 @@ import { cors } from "hono/cors";
 import { env } from "./lib/env";
 import { google } from "googleapis";
 import { db } from "./db";
-import { account, room, roomParticipant, roomSlide, user } from "./db/schema";
-import { and, eq } from "drizzle-orm";
+import { account, room, roomParticipant, roomSlide, session as authSession, user } from "./db/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
@@ -34,7 +34,10 @@ const app = new Hono()
   .on(["POST", "GET"], "/auth/*", (c) => {
     return auth.handler(c.req.raw);
   })
-  .post("/party/:roomId", async (c) => {
+  .post(
+    "/party/:roomId",
+    zValidator("json", z.object({ isJoining: z.boolean().optional() })),
+    async (c) => {
     const roomId = c.req.param("roomId");
     const authHeader = c.req.header("Authorization");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -43,7 +46,7 @@ const app = new Hono()
       return c.json({ error: "Not authenticated" }, 401);
     }
 
-    const body = await c.req.json();
+    const body = c.req.valid("json");
     const isJoining = body?.isJoining || false;
     let userRole = "viewer";
 
@@ -94,6 +97,13 @@ const app = new Hono()
           })
           userRole = "viewer";
         } else {
+          await db
+            .update(roomParticipant)
+            .set({
+              leftAt: null,
+              joinedAt: new Date(),
+            })
+            .where(eq(roomParticipant.id, alreadyParticipant[0].id));
           userRole = alreadyParticipant[0].role;
         }
       }
@@ -116,6 +126,163 @@ const app = new Hono()
 
     return c.json({ role: userRole }, resp.status as 200);
   })
+  .post("/party/:roomId/leave", async (c) => {
+    const roomId = c.req.param("roomId");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    await db
+      .update(roomParticipant)
+      .set({ leftAt: new Date() })
+      .where(
+        and(
+          eq(roomParticipant.roomId, roomId),
+          eq(roomParticipant.userId, session.user.id),
+          isNull(roomParticipant.leftAt)
+        )
+      );
+
+    const activeParticipants = await db
+      .select({ id: roomParticipant.id })
+      .from(roomParticipant)
+      .where(
+        and(eq(roomParticipant.roomId, roomId), isNull(roomParticipant.leftAt))
+      );
+
+    if (activeParticipants.length === 0) {
+      await db.delete(room).where(eq(room.id, roomId));
+      return c.json({ success: true, deleted: true });
+    }
+
+    return c.json({ success: true, deleted: false });
+  })
+  .post("/party/:roomId/presence", async (c) => {
+    const roomId = c.req.param("roomId");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const event = body?.event as "connect" | "disconnect" | undefined;
+
+    if (event !== "connect" && event !== "disconnect") {
+      return c.json({ error: "Invalid event" }, 400);
+    }
+
+    if (event === "connect") {
+      await db
+        .update(roomParticipant)
+        .set({
+          leftAt: null,
+          joinedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(roomParticipant.roomId, roomId),
+            eq(roomParticipant.userId, session.user.id)
+          )
+        );
+      return c.json({ success: true });
+    }
+
+    await db
+      .update(roomParticipant)
+      .set({ leftAt: new Date() })
+      .where(
+        and(
+          eq(roomParticipant.roomId, roomId),
+          eq(roomParticipant.userId, session.user.id),
+          isNull(roomParticipant.leftAt)
+        )
+      );
+
+    const activeParticipants = await db
+      .select({ id: roomParticipant.id })
+      .from(roomParticipant)
+      .where(
+        and(eq(roomParticipant.roomId, roomId), isNull(roomParticipant.leftAt))
+      );
+
+    if (activeParticipants.length === 0) {
+      await db.delete(room).where(eq(room.id, roomId));
+      return c.json({ success: true, deleted: true });
+    }
+
+    return c.json({ success: true, deleted: false });
+  })
+  .post("/party/:roomId/close", async (c) => {
+    const roomId = c.req.param("roomId");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    const participant = await db
+      .select({ id: roomParticipant.id })
+      .from(roomParticipant)
+      .where(
+        and(
+          eq(roomParticipant.roomId, roomId),
+          eq(roomParticipant.userId, session.user.id)
+        )
+      )
+      .limit(1);
+
+    if (!participant.length) {
+      return c.json({ error: "Not a participant" }, 403);
+    }
+
+    await db.delete(room).where(eq(room.id, roomId));
+    return c.json({ success: true, deleted: true });
+  })
+
+  .get("/party/session-user", async (c) => {
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : null;
+
+    if (!token) {
+      return c.json({ error: "Missing bearer token" }, 401);
+    }
+
+    const roomId = c.req.query("roomId");
+
+    const rows = await db
+      .select({ userId: user.id, userName: user.name })
+      .from(authSession)
+      .innerJoin(user, eq(authSession.userId, user.id))
+      .where(eq(authSession.token, token))
+      .limit(1);
+
+    if (!rows.length) {
+      return c.json({ error: "Invalid session token" }, 401);
+    }
+
+    let role: "host" | "viewer" | null = null;
+
+    if (roomId) {
+      const participant = await db
+        .select({ role: roomParticipant.role })
+        .from(roomParticipant)
+        .where(
+          and(
+            eq(roomParticipant.roomId, roomId),
+            eq(roomParticipant.userId, rows[0].userId)
+          )
+        )
+        .limit(1);
+      role = (participant[0]?.role as "host" | "viewer" | undefined) ?? null;
+    }
+
+    return c.json({ ...rows[0], role });
+  })
 
   .post("/room-slide", async (c) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -132,7 +299,6 @@ const app = new Hono()
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    // Fetch host name by joining room → user
     const roomData = await db
       .select({ hostName: user.name })
       .from(room)
@@ -145,7 +311,6 @@ const app = new Hono()
     const { hostName } = roomData[0];
     const slidesJson = JSON.stringify(slides);
 
-    // Upsert: insert or update if roomId already has a record
     await db
       .insert(roomSlide)
       .values({ roomId, hostName, presentationId, slides: slidesJson })

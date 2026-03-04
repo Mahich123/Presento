@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { authClient } from "../lib/auth-client"
 import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
@@ -19,12 +19,20 @@ export default function CollaborationRoom() {
     const [showModal, setShowModal] = useState(false)
     const [roomJoinId, setRoomJoinId] = useState<string>("")
     const [isCreatingRoom, setIsCreatingRoom] = useState(false)
+    const [pendingRejoinRoomId, setPendingRejoinRoomId] = useState<string>("")
+    const [isJoiningFromPrompt, setIsJoiningFromPrompt] = useState(false)
+    const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false)
     const [roomRole, setRoomRole] = useState<'host' | 'viewer' | ''>('')
     const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null)
 
-    const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    const showToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
         setToast({ message, type })
         setTimeout(() => setToast(null), 3000)
+    }, [])
+
+    const normalizeRole = (role: unknown, fallback: 'host' | 'viewer' = 'viewer'): 'host' | 'viewer' => {
+        if (role === 'host' || role === 'viewer') return role
+        return fallback
     }
     console.log('selectedFiles',selectedFiles)
 
@@ -47,14 +55,9 @@ export default function CollaborationRoom() {
         setIsCreatingRoom(true)
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/party/${newRoomId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                credentials: 'include',
-                body: JSON.stringify({ isJoining: false })
+            const response = await client.api.party[":roomId"].$post({
+                param: { roomId: newRoomId },
+                json: { isJoining: false }
             })
 
             if (response.ok) {
@@ -62,7 +65,7 @@ export default function CollaborationRoom() {
                 setRespData(JSON.stringify(res))
                 setRoomId(newRoomId)
                 localStorage.setItem('roomId', newRoomId)
-                setRoomRole(res.role || 'host')
+                setRoomRole(normalizeRole(res.role, 'host'))
                 setShowModal(true)
                 navigate({ to: '/dashboard', search: { roomId: newRoomId } })
             } else {
@@ -78,36 +81,33 @@ export default function CollaborationRoom() {
         }
     }
 
-    const handleJoinRoom = async () => {
-        if (!roomJoinId.trim()) {
+    const joinRoomById = useCallback(async (targetRoomId: string) => {
+        const trimmedRoomId = targetRoomId.trim()
+        if (!trimmedRoomId) {
             showToast("Please enter a valid room ID to join.", 'error')
-            return
+            return false
         }
 
         const token = session?.session.token
 
         if (!token) {
             showToast("You must be logged in to join a room.", 'error')
-            return
+            return false
         }
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_BACKEND_API_URL}/party/${roomJoinId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                credentials: 'include',
-                body: JSON.stringify({ isJoining: true })
+            const response = await client.api.party[":roomId"].$post({
+                param: { roomId: trimmedRoomId },
+                json: { isJoining: true }
             })
 
             if (response.ok) {
                 const res = await response.json()
-                setRoomId(roomJoinId)
-                setRoomRole(res.role || 'viewer')
-                localStorage.setItem('roomId', roomJoinId)
-                navigate({ to: '/dashboard', search: { roomId: roomJoinId } })
+                setRoomId(trimmedRoomId)
+                setRoomRole(normalizeRole(res.role, 'viewer'))
+                localStorage.setItem('roomId', trimmedRoomId)
+                navigate({ to: '/dashboard', search: { roomId: trimmedRoomId } })
+                return true
             } else {
                 const errorText = await response.text()
                 console.error('Server error:', errorText)
@@ -122,7 +122,25 @@ export default function CollaborationRoom() {
             console.error('Error joining room:', error)
             showToast("Network error. Please try again.", 'error')
         }
+        return false
+    }, [navigate, session?.session.token, showToast])
+
+    const handleJoinRoom = async () => {
+        await joinRoomById(roomJoinId)
     }
+
+    const leaveRoomById = useCallback(async (targetRoomId: string) => {
+        const token = session?.session.token
+        if (!token || !targetRoomId.trim()) return
+
+        try {
+            await client.api.party[":roomId"].leave.$post({
+                param: { roomId: targetRoomId }
+            })
+        } catch (error) {
+            console.error('Error leaving room:', error)
+        }
+    }, [session?.session.token])
 
 
     const checkGoogleLinked = async () => {
@@ -145,7 +163,8 @@ export default function CollaborationRoom() {
         const script = document.createElement('script');
         script.src = 'https://apis.google.com/js/api.js';
         script.onload = () => {
-            window.gapi.load('picker', () => {
+            const gapi = (window as Window & { gapi?: { load: (api: string, cb: () => void) => void } }).gapi
+            gapi?.load('picker', () => {
                 setPickerApiLoaded(true);
             });
         };
@@ -163,10 +182,86 @@ export default function CollaborationRoom() {
         }
     }, [session?.user?.id])
 
+    useEffect(() => {
+        const token = session?.session.token
+        if (!token || roomId || pendingRejoinRoomId) return
+
+        const queryRoomId = new URLSearchParams(window.location.search).get('roomId')?.trim() ?? ''
+        const storedRoomId = localStorage.getItem('roomId')?.trim() ?? ''
+        const targetRoomId = queryRoomId || storedRoomId
+
+        if (!targetRoomId) return
+
+        setRoomJoinId(targetRoomId)
+        setPendingRejoinRoomId(targetRoomId)
+    }, [session?.session.token, roomId, pendingRejoinRoomId])
+
+    const handleRequestLeaveRoom = useCallback(() => {
+        setShowLeaveConfirmModal(true)
+    }, [])
+
+    const handleConfirmLeaveRoom = useCallback(() => {
+        const leavingRoomId = roomId
+        setShowLeaveConfirmModal(false)
+        setRoomId('')
+        setRoomRole('')
+        setSelectedFiles([])
+        setPendingRejoinRoomId('')
+        localStorage.removeItem('roomId')
+        navigate({ to: '/dashboard', search: {} })
+        showToast('You left the room.', 'info')
+        void leaveRoomById(leavingRoomId)
+    }, [leaveRoomById, navigate, roomId, showToast])
+
+    const handleCancelRejoin = useCallback(() => {
+        const staleRoomId = pendingRejoinRoomId
+        setPendingRejoinRoomId('')
+        localStorage.removeItem('roomId')
+        navigate({ to: '/dashboard', search: {} })
+        void leaveRoomById(staleRoomId)
+    }, [leaveRoomById, navigate, pendingRejoinRoomId])
+
+    const handleRoomClosed = useCallback((reason?: string) => {
+        setShowLeaveConfirmModal(false)
+        setRoomId('')
+        setRoomRole('')
+        setSelectedFiles([])
+        setPendingRejoinRoomId('')
+        localStorage.removeItem('roomId')
+        navigate({ to: '/dashboard', search: {} })
+        if (reason === 'host_timeout') {
+            showToast('Room closed because host did not return in time.', 'info')
+            return
+        }
+        showToast('Room closed.', 'info')
+    }, [navigate, showToast])
+
+    const handleConfirmRejoin = useCallback(async () => {
+        if (!pendingRejoinRoomId) return
+        setIsJoiningFromPrompt(true)
+        const ok = await joinRoomById(pendingRejoinRoomId)
+        if (ok) {
+            setPendingRejoinRoomId('')
+        } else {
+            localStorage.removeItem('roomId')
+        }
+        setIsJoiningFromPrompt(false)
+    }, [joinRoomById, pendingRejoinRoomId])
+
 
     const openPicker = async () => {
-        if (!pickerApiLoaded || !accessToken) {
-            console.error('Picker not ready or no access token');
+        if (!hasGoogle) {
+            showToast("Connect Google Drive first to use the picker.", 'error')
+            return;
+        }
+
+        if (!pickerApiLoaded) {
+            showToast("Google Picker is still loading. Please try again.", 'info')
+            return;
+        }
+
+        if (!accessToken) {
+            showToast("No Google access token found. Reconnect your Google account.", 'error')
             return;
         }
 
@@ -191,7 +286,11 @@ export default function CollaborationRoom() {
         // Update the access token state with the fresh token
         setAccessToken(newAccessToken);
 
-        const google = window.google;
+        const google = (window as Window & { google?: any }).google;
+        if (!google?.picker) {
+            showToast("Google Picker is not available. Please try again.", 'error')
+            return
+        }
 
         const picker = new google.picker.PickerBuilder()
 
@@ -227,7 +326,17 @@ export default function CollaborationRoom() {
         <div className={`flex flex-col min-h-screen bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
-                <RoomContent roomId={roomId} presentationId={selectedFiles[0]?.id} token={accessToken} sessionToken={session?.session.token ?? ''} roomRole={roomRole} />
+                <RoomContent
+                    roomId={roomId}
+                    presentationId={selectedFiles[0]?.id}
+                    token={accessToken}
+                    sessionToken={session?.session.token ?? ''}
+                    roomRole={roomRole}
+                    onRequestLeave={handleRequestLeaveRoom}
+                    onRoomClosed={handleRoomClosed}
+                    onOpenPicker={openPicker}
+                    pickerReady={hasGoogle && pickerApiLoaded}
+                />
             ) :
 
                 <div className="mockup-window border border-base-300 bg-[#F9FAFB] w-full max-w-lg">
@@ -315,6 +424,59 @@ export default function CollaborationRoom() {
                             Copy Room ID
                         </button>
                         <button className="btn w-full sm:w-auto" onClick={() => setShowModal(false)}>Close</button>
+                    </div>
+                </div>
+            </dialog>
+
+            <dialog className={`modal ${pendingRejoinRoomId ? 'modal-open' : ''}`}>
+                <div className="modal-box w-full max-w-md mx-4">
+                    <h3 className="font-bold text-lg">Rejoin room?</h3>
+                    <p className="py-3 text-sm text-gray-600">
+                        Room <code className="bg-gray-100 px-2 py-1 rounded">{pendingRejoinRoomId}</code> is still in your session.
+                        Do you want to rejoin this room?
+                    </p>
+                    <div className="modal-action">
+                        <button
+                            className="btn"
+                            onClick={handleCancelRejoin}
+                            disabled={isJoiningFromPrompt}
+                        >
+                            No
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleConfirmRejoin}
+                            disabled={isJoiningFromPrompt}
+                        >
+                            {isJoiningFromPrompt ? (
+                                <span className="loading loading-spinner loading-sm"></span>
+                            ) : (
+                                'Rejoin'
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </dialog>
+
+            <dialog className={`modal ${showLeaveConfirmModal ? 'modal-open' : ''}`}>
+                <div className="modal-box w-full max-w-md mx-4">
+                    <h3 className="font-bold text-lg">Leave room?</h3>
+                    <p className="py-3 text-sm text-gray-600">
+                        Are you sure you want to leave this room?
+                    </p>
+                    <div className="modal-action">
+                        <button
+                            className="btn"
+                            onClick={() => setShowLeaveConfirmModal(false)}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            className="btn btn-error text-white"
+                            onClick={handleConfirmLeaveRoom}
+                        >
+                            Leave
+                        </button>
                     </div>
                 </div>
             </dialog>

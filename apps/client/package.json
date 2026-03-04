@@ -16,6 +16,7 @@
     "@types/gapi": "^0.0.47",
     "@types/react-google-picker": "^0.1.4",
     "daisyui": "^5.3.10",
+    "lucide-react": "^0.577.0",
     "nanoid": "^5.1.6",
     "partysocket": "^1.1.6",
     "porp-types": "^0.0.1-security",
