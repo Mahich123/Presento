@@ -2,6 +2,8 @@ import usePartySocket from "partysocket/react";
 import { useEffect, useState, useRef, useCallback } from "react";
 import type PartySocket from "partysocket";
 import { client } from "../utils/honoClient";
+import { Ban } from "lucide-react";
+import userAuth from "../utils/userSession";
 
 interface RoomContentProps {
   roomId: string;
@@ -26,6 +28,7 @@ interface ChatMessage {
   userName: string;
   message: string;
   timestamp: number;
+  role?: string;
 }
 
 const useMockApi = import.meta.env.VITE_USE_MOCK_API === 'true'
@@ -44,6 +47,7 @@ function WebSocketConnection({
   onHostLeftTick,
   onHostReturned,
   onRoomClosed,
+  onMuteStatus,
   wsRef
 }: {
   roomId: string;
@@ -55,10 +59,11 @@ function WebSocketConnection({
   onSlideChange: (index: number) => void;
   onUserCount: (count: number) => void;
   onChatMessage: (msg: ChatMessage) => void;
-  onHostLeft: (payload: { remainingMs: number; endsAt: number }) => void;
+  onHostLeft: (payload: { remainingMs: number; endsAt: number; totalMs?: number }) => void;
   onHostLeftTick: (payload: { remainingMs: number; endsAt: number }) => void;
   onHostReturned: () => void;
   onRoomClosed: (reason?: string) => void;
+  onMuteStatus: (payload: { userId: string; isMuted: boolean }) => void;
   wsRef: { current: PartySocket | null };
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
@@ -91,11 +96,12 @@ function WebSocketConnection({
       } else if (data.type === 'user_count') {
         onUserCount(data.count);
       } else if (data.type === 'chat_message') {
-        onChatMessage(data);
+        onChatMessage({ ...data, role: data.role ?? 'viewer' });
       } else if (data.type === 'host_left') {
         onHostLeft({
           remainingMs: Number(data.remainingMs ?? 0),
-          endsAt: Number(data.endsAt ?? Date.now())
+          endsAt: Number(data.endsAt ?? Date.now()),
+          totalMs: data.totalMs !== undefined ? Number(data.totalMs) : undefined,
         })
       } else if (data.type === 'host_left_tick') {
         onHostLeftTick({
@@ -106,6 +112,8 @@ function WebSocketConnection({
         onHostReturned()
       } else if (data.type === 'room_closed') {
         onRoomClosed(data.reason)
+      } else if (data.type === 'mute_status') {
+        onMuteStatus({ userId: data.userId, isMuted: data.isMuted })
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
       }
@@ -137,6 +145,9 @@ function RoomContent({
   pickerReady = false
 }: RoomContentProps) {
 
+  const { session } = userAuth();
+  const currentUserId = session?.user?.id;
+
   const [socketConnected, setSocketConnected] = useState(false);
   const [slideContent, setSlideContent] = useState<MockSlideProps[]>([]);
   const [activePresentationId, setActivePresentationId] = useState(presentationId);
@@ -144,6 +155,8 @@ function RoomContent({
   const [currentSlide, setCurrentSlide] = useState(0)
   const [userCount, setUserCount] = useState(1)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [mutedUsers, setMutedUsers] = useState<Set<string>>(new Set())
+  const [isMuted, setIsMuted] = useState(false)
   const [chatInput, setChatInput] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
@@ -187,6 +200,21 @@ function RoomContent({
     console.log('msg', msg)
     setChatMessages(prev => [...prev, msg])
     if (!chatOpenRef.current) setUnreadCount(prev => prev + 1)
+  }, [])
+
+  const handleMuteStatus = useCallback(({ userId, isMuted: muted }: { userId: string; isMuted: boolean }) => {
+    setMutedUsers(prev => {
+      const next = new Set(prev)
+      if (muted) next.add(userId)
+      else next.delete(userId)
+      return next
+    })
+    if (userId === currentUserId) setIsMuted(muted)
+  }, [currentUserId])
+
+  const handleMuteUser = useCallback((userId: string) => {
+    if (!wsRef.current) return
+    wsRef.current.send(JSON.stringify({ type: 'mute_user', userId }))
   }, [])
 
   const handleLeaveRoom = useCallback(() => {
@@ -275,7 +303,7 @@ function RoomContent({
     }
   }, [])
 
-  // Display the current slide — use cached blob URL if available, fall back to direct URL
+
   useEffect(() => {
     if (!slideContent.length || !activePresentationId) return
 
@@ -286,7 +314,6 @@ function RoomContent({
     if (cached) {
       setSlideImage(cached)
     } else {
-      // Fallback while cache is warming up (also used for mock API)
       setSlideImage(
         `/api/slideimage/${activePresentationId}/${pageId}?roomId=${roomId}`
       )
@@ -316,10 +343,10 @@ function RoomContent({
           onSlideChange={setCurrentSlide}
           onUserCount={setUserCount}
           onChatMessage={handleChatMessage}
-          onHostLeft={({ remainingMs }) => {
+          onHostLeft={({ remainingMs, totalMs }) => {
             if (roomRole === 'viewer') {
               setHostLeftRemainingMs(remainingMs)
-              setHostLeftTotalMs(remainingMs)
+              setHostLeftTotalMs(totalMs ?? remainingMs)
             }
           }}
           onHostLeftTick={({ remainingMs }) => {
@@ -333,6 +360,7 @@ function RoomContent({
             setHostLeftTotalMs(null)
           }}
           onRoomClosed={(reason) => onRoomClosed(reason)}
+          onMuteStatus={handleMuteStatus}
           wsRef={wsRef}
         />
       )}
@@ -385,7 +413,7 @@ function RoomContent({
                   </div>
                 </div>
               )}
-              <div className="absolute top-3 right-3 z-20 hidden lg:block">
+              <div className="absolute top-3 right-3 z-10 hidden lg:block">
                 <button
                   className="btn btn-sm btn-error text-white"
                   onClick={handleLeaveRoom}
@@ -540,11 +568,20 @@ function RoomContent({
               ) : (
                 chatMessages.map((msg) => (
                   <div key={msg.id} className="flex flex-col">
-                    <div className="flex items-baseline gap-2">
+                    <div className="group flex items-center gap-2 cursor-pointer">
                       <span className="font-medium text-sm text-gray-800">{msg.userName}</span>
                       <span className="text-xs text-gray-400">
                         {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
+                      {roomRole === 'host' && msg.role !== 'host' && msg.userId !== currentUserId && (
+                        <button
+                          className=" tooltip tooltip-bottom"
+                          data-tip={mutedUsers.has(msg.userId) ? 'unmute user' : 'mute user'}
+                          onClick={() => handleMuteUser(msg.userId)}
+                        >
+                          <Ban className={`size-4 ${mutedUsers.has(msg.userId) ? 'text-red-600' : 'text-gray-400'}`} />
+                        </button>
+                      )}
                     </div>
                     <p className="text-sm text-gray-600">{msg.message}</p>
                   </div>
@@ -554,23 +591,30 @@ function RoomContent({
             </div>
 
             <div className="p-2 sm:p-3 border-t border-gray-200 shrink-0">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                  placeholder="Type a message..."
-                  className="flex-1 input input-bordered input-sm"
-                />
-                <button
-                  onClick={handleSendChat}
-                  disabled={!chatInput.trim()}
-                  className="btn btn-primary btn-sm"
-                >
-                  Send
-                </button>
-              </div>
+              {isMuted ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200">
+                  <Ban className="size-4 text-red-500 shrink-0" />
+                  <p className="text-xs text-red-600 font-medium">You have been muted by the host.</p>
+                </div>
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
+                    placeholder="Type a message..."
+                    className="flex-1 min-w-0 input input-bordered input-sm bg-white text-gray-900 placeholder-gray-400"
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    disabled={!chatInput.trim()}
+                    className="btn btn-sm shrink-0 bg-blue-600 hover:bg-blue-700 text-white border-0 disabled:bg-blue-300 disabled:text-white"
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </>

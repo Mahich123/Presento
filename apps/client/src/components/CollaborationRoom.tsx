@@ -19,6 +19,7 @@ export default function CollaborationRoom() {
     const [showModal, setShowModal] = useState(false)
     const [roomJoinId, setRoomJoinId] = useState<string>("")
     const [isCreatingRoom, setIsCreatingRoom] = useState(false)
+    const [selectedCard, setSelectedCard] = useState<'create' | 'join' | null>(null)
     const [pendingRejoinRoomId, setPendingRejoinRoomId] = useState<string>("")
     const [isJoiningFromPrompt, setIsJoiningFromPrompt] = useState(false)
     const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false)
@@ -34,7 +35,7 @@ export default function CollaborationRoom() {
         if (role === 'host' || role === 'viewer') return role
         return fallback
     }
-    console.log('selectedFiles',selectedFiles)
+    console.log('selectedFiles', selectedFiles)
 
     const handleConnect = async () => {
         return await authClient.signIn.social({
@@ -323,7 +324,7 @@ export default function CollaborationRoom() {
 
 
     return (
-        <div className={`flex flex-col min-h-screen bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
+        <div className={`flex flex-col h-full bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
                 <RoomContent
@@ -338,38 +339,140 @@ export default function CollaborationRoom() {
                     pickerReady={hasGoogle && pickerApiLoaded}
                 />
             ) :
+                <div className="w-full px-4 flex flex-col items-center py-8 sm:py-0">
+                    <div className="text-center mb-8 sm:mb-10">
+                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">What's you wanna do today?</h1>
+                        <p className="text-gray-500 text-sm max-w-md">
+                            Ready to lead? Open a new room to present your ideas or join a session to contribute and make your mark.
+                        </p>
+                    </div>
 
-                <div className="mockup-window border border-base-300 bg-[#F9FAFB] w-full max-w-lg">
-                    <div className="flex flex-col sm:flex-row items-center justify-center gap-2 border-t border-base-300 p-6 sm:p-8">
-                        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-                            <input
-                                type="text"
-                                placeholder="Enter room ID"
-                                value={roomJoinId}
-                                onChange={(e) => setRoomJoinId(e.target.value)}
-                                className="input input-bordered w-full sm:w-64"
-                            />
-                            <button
-                                onClick={handleJoinRoom}
-                                className="btn btn-primary disabled:btn-disabled w-full sm:w-auto"
+                    <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-center items-stretch sm:items-start gap-4 sm:gap-0">
+
+
+                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'join'
+                                ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
+                                : selectedCard === 'create'
+                                    ? 'w-full sm:w-96 max-h-[32rem] opacity-100'
+                                    : 'w-full sm:w-72 max-h-[32rem] opacity-100'
+                            }`}>
+                            <div
+                                className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'create'
+                                        ? 'border-blue-200 shadow-xl ring-2 ring-blue-100'
+                                        : 'border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 cursor-pointer'
+                                    }`}
+                                onClick={() => selectedCard === null && setSelectedCard('create')}
                             >
-                                Join Room
-                            </button>
+                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'create' ? 'bg-blue-100' : 'bg-blue-50'}`}>
+                                    <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                </div>
+                                <h2 className="text-base sm:text-lg font-bold text-gray-800 mb-2">Create Room</h2>
+                                <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'create'
+                                        ? 'max-h-24 opacity-100 mt-1 delay-200'
+                                        : 'max-h-0 opacity-0'
+                                    }`}>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                        Start a new session. A unique room ID will be generated, share it with others so they can join.
+                                    </p>
+                                </div>
+
+
+                                <div className={`w-full flex flex-col gap-3 overflow-hidden transition-all duration-300 ${selectedCard === 'create'
+                                        ? 'max-h-40 opacity-100 mt-7 delay-300'
+                                        : 'max-h-0 opacity-0 mt-0 pointer-events-none'
+                                    }`}>
+                                    <button
+                                        onClick={handleCreateRoom}
+                                        disabled={isCreatingRoom}
+                                        className="w-full btn btn-primary rounded-xl"
+                                    >
+                                        {isCreatingRoom ? (
+                                            <span className="loading loading-spinner loading-sm"></span>
+                                        ) : (
+                                            'Create Room'
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectedCard(null)}
+                                        className="w-full btn btn-ghost btn-sm text-gray-400 rounded-xl"
+                                    >
+                                        ← Back
+                                    </button>
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="divider sm:divider-horizontal my-1 sm:my-0">OR</div>
 
-                        <button
-                            onClick={handleCreateRoom}
-                            disabled={isCreatingRoom}
-                            className="btn btn-secondary w-full sm:w-auto"
-                        >
-                            {isCreatingRoom ? (
-                                <span className="loading loading-spinner loading-sm"></span>
-                            ) : (
-                                'Create Room'
-                            )}
-                        </button>
+                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard !== null ? 'max-h-0 sm:w-0 opacity-0' : 'max-h-16 sm:max-h-none w-full sm:w-14 opacity-100'
+                            }`}>
+                            <div className="w-full sm:w-14 flex flex-row sm:flex-col items-center justify-center gap-2 py-1 sm:py-10">
+                                <div className="h-px w-full sm:w-px sm:h-10 bg-gray-200"></div>
+                                <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2 py-1 rounded-full">OR</span>
+                                <div className="h-px w-full sm:w-px sm:h-10 bg-gray-200"></div>
+                            </div>
+                        </div>
+
+
+                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'create'
+                                ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
+                                : selectedCard === 'join'
+                                    ? 'w-full sm:w-96 max-h-[34rem] opacity-100'
+                                    : 'w-full sm:w-72 max-h-[34rem] opacity-100'
+                            }`}>
+                            <div
+                                className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'join'
+                                        ? 'border-green-200 shadow-xl ring-2 ring-green-100'
+                                        : 'border-gray-100 shadow-sm hover:shadow-md hover:border-green-200 cursor-pointer'
+                                    }`}
+                                onClick={() => selectedCard === null && setSelectedCard('join')}
+                            >
+                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'join' ? 'bg-green-100' : 'bg-green-50'}`}>
+                                    <svg className="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                </div>
+                                <h2 className="text-base sm:text-lg font-bold text-gray-800 mb-2">Join Room</h2>
+                                <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'join'
+                                        ? 'max-h-24 opacity-100 mt-1 delay-200'
+                                        : 'max-h-0 opacity-0'
+                                    }`}>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                        Have a room ID? Enter it below to jump into an ongoing session as a viewer.
+                                    </p>
+                                </div>
+
+
+                                <div className={`w-full flex flex-col gap-3 overflow-hidden transition-all duration-300 ${selectedCard === 'join'
+                                        ? 'max-h-48 opacity-100 mt-7 delay-300'
+                                        : 'max-h-0 opacity-0 mt-0 pointer-events-none'
+                                    }`}>
+                                    <input
+                                        type="text"
+                                        placeholder="Enter room ID"
+                                        value={roomJoinId}
+                                        onChange={(e) => setRoomJoinId(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
+                                        className="input input-bordered w-full rounded-xl text-sm outline-none"
+                                    />
+                                    <button
+                                        onClick={handleJoinRoom}
+                                        disabled={!roomJoinId.trim()}
+                                        className="w-full btn btn-success text-black rounded-xl disabled:opacity-50"
+                                    >
+                                        Join Room
+                                    </button>
+                                    <button
+                                        onClick={() => setSelectedCard(null)}
+                                        className="w-full btn btn-ghost btn-sm text-gray-400 rounded-xl"
+                                    >
+                                        ← Back
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             }
@@ -486,7 +589,7 @@ export default function CollaborationRoom() {
                     message={toast.message}
                     onClose={() => setToast(null)}
                 />
-             ) : null}  
+            ) : null}
 
 
 

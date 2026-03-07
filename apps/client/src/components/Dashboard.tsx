@@ -19,9 +19,11 @@ export default function Dashboard() {
   }
 
   return (
-    <div>
+    <div className="h-screen overflow-hidden flex flex-col">
       <Header />
-      <CollaborationRoom />
+      <div className="flex-1 overflow-hidden">
+        <CollaborationRoom />
+      </div>
     </div>
   )
 }

@@ -99,6 +99,7 @@ export const roomParticipant = sqliteTable("room_participant", {
   roomId: text("room_id").notNull().references(() => room.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
+  isMuted: integer("is_muted", { mode: "boolean" }).default(false).notNull(),
   joinedAt: integer("joined_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),

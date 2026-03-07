@@ -8,6 +8,8 @@ export default class Server implements Party.Server {
   hostLeftTickInterval: ReturnType<typeof setInterval> | null = null;
   hostLeftEndsAt: number | null = null;
   readonly hostGraceMs = 90_000;
+  disconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  readonly userGraceMs = 45_000;
 
   constructor(readonly room: Party.Room) {}
 
@@ -66,10 +68,18 @@ export default class Server implements Party.Server {
   }
 
   broadcastUserCount() {
-    const connections = Array.from(this.room.getConnections());
+    const activeUserIds = new Set(
+      this.getConnectionsWithState()
+        .map(({ state }) => state?.userId)
+        .filter((id): id is string => !!id)
+    );
+    const graceUserIds = new Set(
+      Array.from(this.disconnectTimers.keys()).filter(id => !activeUserIds.has(id))
+    );
+    const count = activeUserIds.size + graceUserIds.size;
     this.room.broadcast(JSON.stringify({
       type: "user_count",
-      count: connections.length
+      count,
     }));
   }
 
@@ -87,14 +97,32 @@ export default class Server implements Party.Server {
       });
 
       if (!response.ok) return null;
-      const data = await response.json() as { userId?: string; userName?: string; role?: "host" | "viewer" | null };
+      const data = await response.json() as { userId?: string; userName?: string; role?: "host" | "viewer" | null; isMuted?: boolean };
       return {
         userId: data.userId,
         userName: data.userName,
         role: data.role ?? undefined,
+        isMuted: data.isMuted ?? false,
       };
     } catch (error) {
       console.error("Failed to resolve user from session token:", error);
+      return null;
+    }
+  }
+
+  async toggleMuteInBackend(hostToken: string, targetUserId: string): Promise<boolean | null> {
+    try {
+      const response = await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/mute/${targetUserId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${hostToken}`,
+        },
+      });
+      if (!response.ok) return null;
+      const data = await response.json() as { isMuted?: boolean };
+      return data.isMuted ?? null;
+    } catch (error) {
+      console.error("Failed to toggle mute in backend:", error);
       return null;
     }
   }
@@ -137,7 +165,7 @@ export default class Server implements Party.Server {
   getConnectionsWithState() {
     return Array.from(this.room.getConnections()).map((conn) => ({
       conn,
-      state: (conn.state as { userId?: string; userName?: string; role?: "host" | "viewer"; token?: string } | null) ?? null,
+      state: (conn.state as { userId?: string; userName?: string; role?: "host" | "viewer"; token?: string; isMuted?: boolean } | null) ?? null,
     }));
   }
 
@@ -178,7 +206,7 @@ export default class Server implements Party.Server {
       await this.closeRoomInBackend(connectionWithToken.state.token);
     }
     this.room.broadcast(JSON.stringify({ type: "room_closed", reason }));
-    for (const connection of this.room.getConnections()) {
+    for (const connection of Array.from(this.room.getConnections())) {
       connection.close(4002, reason);
     }
   }
@@ -238,12 +266,25 @@ export default class Server implements Party.Server {
       userId: userInfo?.userId,
       userName: userInfo?.userName || `User ${conn.id.slice(0, 4)}`,
       role: userInfo?.role || "viewer",
+      isMuted: userInfo?.isMuted ?? false,
     });
 
+    // Cancel grace period timer if the user is reconnecting before it expired
+    let wasInGracePeriod = false;
+    if (userInfo?.userId) {
+      const pendingTimer = this.disconnectTimers.get(userInfo.userId);
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        this.disconnectTimers.delete(userInfo.userId);
+        wasInGracePeriod = true;
+      }
+    }
+
+    // Only send presence "connect" for a fresh join — not a reconnect within grace period
     const sameUserConnections = this.getConnectionsWithState().filter(
       ({ state }) => state?.userId && state?.userId === userInfo?.userId
     );
-    if (userInfo?.userId && sameUserConnections.length === 1) {
+    if (userInfo?.userId && sameUserConnections.length === 1 && !wasInGracePeriod) {
       await this.sendPresenceEvent(token, "connect");
     }
 
@@ -263,6 +304,22 @@ export default class Server implements Party.Server {
       }));
     }
 
+    // Sync active host-left timer to the new connection
+    if (this.hostLeftEndsAt && !this.hasConnectedHost()) {
+      const remainingMs = Math.max(0, this.hostLeftEndsAt - Date.now());
+      conn.send(JSON.stringify({
+        type: "host_left",
+        endsAt: this.hostLeftEndsAt,
+        remainingMs,
+        totalMs: this.hostGraceMs,
+      }));
+    }
+
+    // Notify user of their mute status on connect
+    if (userInfo?.isMuted) {
+      conn.send(JSON.stringify({ type: "mute_status", userId: userInfo.userId, isMuted: true }));
+    }
+
     // Broadcast updated user count
     this.broadcastUserCount();
     await this.updateRoomLifecycle();
@@ -272,14 +329,32 @@ export default class Server implements Party.Server {
     console.log(`Connection ${conn.id} closed`);
     const state = (conn.state as { userId?: string; token?: string } | null) ?? null;
     const sameUserStillConnected = this.getConnectionsWithState().some(
-      ({ state: connectedState }) =>
-        !!state?.userId && connectedState?.userId === state.userId
+      ({ conn: connectedConn, state: connectedState }) =>
+        connectedConn.id !== conn.id &&
+        !!state?.userId &&
+        connectedState?.userId === state.userId
     );
-    if (state?.token && !sameUserStillConnected) {
-      await this.sendPresenceEvent(state.token, "disconnect");
+
+    if (state?.token && state?.userId && !sameUserStillConnected) {
+      const userId = state.userId;
+      const token = state.token;
+
+      // Clear any stale timer for this user (safety guard)
+      const existing = this.disconnectTimers.get(userId);
+      if (existing) clearTimeout(existing);
+
+      // Defer presence disconnect — fire only if user doesn't reconnect within grace period
+      const timer = setTimeout(async () => {
+        this.disconnectTimers.delete(userId);
+        await this.sendPresenceEvent(token, "disconnect");
+        this.broadcastUserCount();
+        await this.updateRoomLifecycle();
+      }, this.userGraceMs);
+
+      this.disconnectTimers.set(userId, timer);
     }
 
-    // Broadcast updated user count after disconnect
+    // Broadcast count immediately — grace period users are still included in the count
     this.broadcastUserCount();
     await this.updateRoomLifecycle();
   }
@@ -328,7 +403,14 @@ export default class Server implements Party.Server {
           [sender.id]
         );
       } else if (data.type === "chat_message") {
-        const state = sender.state as { userId?: string; userName?: string } | null;
+        const state = sender.state as { userId?: string; userName?: string; isMuted?: boolean } | null;
+        if (state?.isMuted) {
+          sender.send(JSON.stringify({
+            type: "error",
+            message: "You are muted by the host and cannot send messages."
+          }));
+          return;
+        }
         const userName = state?.userName || `User ${sender.id.slice(0, 4)}`;
         this.room.broadcast(
           JSON.stringify({
@@ -340,6 +422,34 @@ export default class Server implements Party.Server {
             timestamp: Date.now()
           })
         );
+      } else if (data.type === "mute_user") {
+        const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
+        if (senderState?.role !== "host") {
+          sender.send(JSON.stringify({ type: "error", message: "Only the host can mute users." }));
+          return;
+        }
+        const targetUserId = data.userId as string | undefined;
+        if (!targetUserId || !senderState?.token) return;
+
+        const newMuteState = await this.toggleMuteInBackend(senderState.token, targetUserId);
+        if (newMuteState === null) {
+          sender.send(JSON.stringify({ type: "error", message: "Failed to update mute state." }));
+          return;
+        }
+
+        // Update the target user's connection state
+        for (const { conn, state } of this.getConnectionsWithState()) {
+          if (state?.userId === targetUserId) {
+            conn.setState({ ...state, isMuted: newMuteState });
+          }
+        }
+
+        // Broadcast mute status to all connections so host and target see the update
+        this.room.broadcast(JSON.stringify({
+          type: "mute_status",
+          userId: targetUserId,
+          isMuted: newMuteState,
+        }));
       }
     } catch (error) {
       console.error("Error processing message:", error);

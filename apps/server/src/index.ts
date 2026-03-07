@@ -281,7 +281,82 @@ const app = new Hono()
       role = (participant[0]?.role as "host" | "viewer" | undefined) ?? null;
     }
 
-    return c.json({ ...rows[0], role });
+    let isMuted = false;
+    if (roomId && role) {
+      const participantRow = await db
+        .select({ isMuted: roomParticipant.isMuted })
+        .from(roomParticipant)
+        .where(
+          and(
+            eq(roomParticipant.roomId, roomId),
+            eq(roomParticipant.userId, rows[0].userId)
+          )
+        )
+        .limit(1);
+      isMuted = participantRow[0]?.isMuted ?? false;
+    }
+
+    return c.json({ ...rows[0], role, isMuted });
+  })
+
+  .post("/party/:roomId/mute/:targetUserId", async (c) => {
+    const roomId = c.req.param("roomId");
+    const targetUserId = c.req.param("targetUserId");
+
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+    if (!token) return c.json({ error: "Not authenticated" }, 401);
+
+    const sessionRows = await db
+      .select({ userId: user.id })
+      .from(authSession)
+      .innerJoin(user, eq(authSession.userId, user.id))
+      .where(eq(authSession.token, token))
+      .limit(1);
+
+    if (!sessionRows.length) return c.json({ error: "Invalid session" }, 401);
+
+    const requestingUserId = sessionRows[0].userId;
+
+    
+    const hostCheck = await db
+      .select({ hostId: room.hostId })
+      .from(room)
+      .where(eq(room.id, roomId))
+      .limit(1);
+
+    if (!hostCheck.length || hostCheck[0].hostId !== requestingUserId) {
+      return c.json({ error: "Only the host can mute users" }, 403);
+    }
+
+    const participant = await db
+      .select({ isMuted: roomParticipant.isMuted })
+      .from(roomParticipant)
+      .where(
+        and(
+          eq(roomParticipant.roomId, roomId),
+          eq(roomParticipant.userId, targetUserId)
+        )
+      )
+      .limit(1);
+
+    if (!participant.length) {
+      return c.json({ error: "User not found in room" }, 404);
+    }
+
+    const newMuteState = !participant[0].isMuted;
+
+    await db
+      .update(roomParticipant)
+      .set({ isMuted: newMuteState })
+      .where(
+        and(
+          eq(roomParticipant.roomId, roomId),
+          eq(roomParticipant.userId, targetUserId)
+        )
+      );
+
+    return c.json({ success: true, isMuted: newMuteState });
   })
 
   .post("/room-slide", async (c) => {
