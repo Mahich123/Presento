@@ -48,6 +48,8 @@ function WebSocketConnection({
   onHostReturned,
   onRoomClosed,
   onMuteStatus,
+  onUserJoined,
+  onUserLeft,
   wsRef
 }: {
   roomId: string;
@@ -64,6 +66,8 @@ function WebSocketConnection({
   onHostReturned: () => void;
   onRoomClosed: (reason?: string) => void;
   onMuteStatus: (payload: { userId: string; isMuted: boolean }) => void;
+  onUserJoined: (userName: string) => void;
+  onUserLeft: (userName: string) => void;
   wsRef: { current: PartySocket | null };
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
@@ -114,6 +118,10 @@ function WebSocketConnection({
         onRoomClosed(data.reason)
       } else if (data.type === 'mute_status') {
         onMuteStatus({ userId: data.userId, isMuted: data.isMuted })
+      } else if (data.type === 'user_joined') {
+        onUserJoined(data.userName)
+      } else if (data.type === 'user_left') {
+        onUserLeft(data.userName)
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
       }
@@ -165,6 +173,14 @@ function RoomContent({
   const [hostLeftTotalMs, setHostLeftTotalMs] = useState<number | null>(null)
   const chatOpenRef = useRef<boolean>(false)
   const wsRef = useRef<PartySocket | null>(null);
+  const roomRoleRef = useRef(roomRole)
+  useEffect(() => { roomRoleRef.current = roomRole }, [roomRole])
+  const joinBatchRef = useRef<string[]>([])
+  const leaveBatchRef = useRef<string[]>([])
+  const joinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [roomNotification, setRoomNotification] = useState<string | null>(null)
+  const notifDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const slideCacheRef = useRef<Map<string, string>>(new Map());
   const [cachedPageIds, setCachedPageIds] = useState<Set<string>>(new Set());
@@ -215,6 +231,52 @@ function RoomContent({
   const handleMuteUser = useCallback((userId: string) => {
     if (!wsRef.current) return
     wsRef.current.send(JSON.stringify({ type: 'mute_user', userId }))
+  }, [])
+
+  const showRoomNotification = useCallback((msg: string) => {
+    setRoomNotification(msg)
+    if (notifDismissRef.current) clearTimeout(notifDismissRef.current)
+    notifDismissRef.current = setTimeout(() => setRoomNotification(null), 3500)
+  }, [])
+
+  const handleUserJoined = useCallback((userName: string) => {
+    joinBatchRef.current.push(userName)
+    if (joinTimerRef.current) clearTimeout(joinTimerRef.current)
+    joinTimerRef.current = setTimeout(() => {
+      const names = joinBatchRef.current.splice(0)
+      const isHost = roomRoleRef.current === 'host'
+      if (isHost) {
+        if (names.length === 1) showRoomNotification(`${names[0]} joined`)
+        else if (names.length === 2) showRoomNotification(`${names[0]} and ${names[1]} joined`)
+        else showRoomNotification(`${names[0]}, ${names[1]} and ${names.length - 2} others joined`)
+      } else {
+        showRoomNotification(`${names.length} ${names.length === 1 ? 'person' : 'people'} joined`)
+      }
+    }, 2000)
+  }, [showRoomNotification])
+
+  const handleUserLeft = useCallback((userName: string) => {
+    leaveBatchRef.current.push(userName)
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    leaveTimerRef.current = setTimeout(() => {
+      const names = leaveBatchRef.current.splice(0)
+      const isHost = roomRoleRef.current === 'host'
+      if (isHost) {
+        if (names.length === 1) showRoomNotification(`${names[0]} left`)
+        else if (names.length === 2) showRoomNotification(`${names[0]} and ${names[1]} left`)
+        else showRoomNotification(`${names[0]}, ${names[1]} and ${names.length - 2} others left`)
+      } else {
+        showRoomNotification(`${names.length} ${names.length === 1 ? 'person' : 'people'} left`)
+      }
+    }, 2000)
+  }, [showRoomNotification])
+
+  useEffect(() => {
+    return () => {
+      if (joinTimerRef.current) clearTimeout(joinTimerRef.current)
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+      if (notifDismissRef.current) clearTimeout(notifDismissRef.current)
+    }
   }, [])
 
   const handleLeaveRoom = useCallback(() => {
@@ -331,7 +393,13 @@ function RoomContent({
 
   return (
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
-     
+
+      {roomNotification && (
+        <div className="fixed bottom-6 left-6 z-[9999] bg-white dark:bg-black text-gray-800 dark:text-white text-sm px-4 py-2.5 rounded-xl pointer-events-none shadow-lg border border-gray-100 dark:border-gray-800">
+          {roomNotification}
+        </div>
+      )}
+
       {!useMockApi && roomId && sessionToken && (
         <WebSocketConnection
           roomId={roomId}
@@ -361,6 +429,8 @@ function RoomContent({
           }}
           onRoomClosed={(reason) => onRoomClosed(reason)}
           onMuteStatus={handleMuteStatus}
+          onUserJoined={handleUserJoined}
+          onUserLeft={handleUserLeft}
           wsRef={wsRef}
         />
       )}
@@ -413,6 +483,10 @@ function RoomContent({
                   </div>
                 </div>
               )}
+
+              <div className="absolute top-3 left-3 z-10 rounded-md bg-black/65 px-2.5 py-1 text-xs sm:text-sm text-white">
+                Room ID: <span className="font-semibold tracking-wide">{roomId}</span>
+              </div>
               <div className="absolute top-3 right-3 z-10 hidden lg:block">
                 <button
                   className="btn btn-sm btn-error text-white"
@@ -433,14 +507,14 @@ function RoomContent({
             
               <div className={`absolute left-2 right-2 sm:left-4 sm:right-4 top-1/2 flex -translate-y-1/2 justify-between pointer-events-none ${roomRole === 'viewer' ? 'hidden' : ''}`}>
                 <button
-                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto"
+                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
                   onClick={() => setCurrentSlide(prev => Math.max(0, prev - 1))}
                   disabled={currentSlide === 0}
                 >
                   ❮
                 </button>
                 <button
-                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto"
+                  className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
                   onClick={() => setCurrentSlide(prev => Math.min(slideContent.length - 1, prev + 1))}
                   disabled={currentSlide >= slideContent.length - 1}
                 >
@@ -552,16 +626,17 @@ function RoomContent({
                 </button>
               </div>
             </div>
-            <div className="px-3 sm:px-4 py-2 border-b border-gray-100 shrink-0">
+            {roomRole === 'host' && (
+            <div className="px-3 sm:px-4 py-2 border-b border-gray-100 shrink-0 ">
               <button
-                className="btn btn-sm btn-outline w-full"
+                className="btn btn-sm btn-outline w-full dark:bg-gray-800 dark:text-gray-100"
                 onClick={onOpenPicker}
                 disabled={!onOpenPicker || !pickerReady}
               >
                 {pickerReady ? "Choose from Drive" : "Drive Picker Loading..."}
               </button>
             </div>
-
+            )}
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 min-h-0">
               {chatMessages.length === 0 ? (
                 <p className="text-gray-400 text-center text-sm">No messages yet</p>

@@ -482,7 +482,7 @@ export default function CollaborationRoom() {
                     <h3 className="font-bold text-base sm:text-lg mb-4">Room Created Successfully! 🎉</h3>
 
                     <div className="space-y-4 mb-6">
-                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded break-all">{roomId}</code></p>
+                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="px-2 py-1 rounded break-all bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{roomId}</code></p>
                         <p className="text-xs sm:text-sm text-gray-600">Share this Room ID with your collaborators to join the session.</p>
                     </div>
 
@@ -535,7 +535,7 @@ export default function CollaborationRoom() {
                 <div className="modal-box w-full max-w-md mx-4">
                     <h3 className="font-bold text-lg">Rejoin room?</h3>
                     <p className="py-3 text-sm text-gray-600">
-                        Room <code className="bg-gray-100 px-2 py-1 rounded">{pendingRejoinRoomId}</code> is still in your session.
+                        Room <code className="px-2 py-1 rounded bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{pendingRejoinRoomId}</code> is still in your session.
                         Do you want to rejoin this room?
                     </p>
                     <div className="modal-action">

@@ -73,10 +73,7 @@ export default class Server implements Party.Server {
         .map(({ state }) => state?.userId)
         .filter((id): id is string => !!id)
     );
-    const graceUserIds = new Set(
-      Array.from(this.disconnectTimers.keys()).filter(id => !activeUserIds.has(id))
-    );
-    const count = activeUserIds.size + graceUserIds.size;
+    const count = activeUserIds.size;
     this.room.broadcast(JSON.stringify({
       type: "user_count",
       count,
@@ -280,18 +277,26 @@ export default class Server implements Party.Server {
       }
     }
 
-    // Only send presence "connect" for a fresh join — not a reconnect within grace period
     const sameUserConnections = this.getConnectionsWithState().filter(
       ({ state }) => state?.userId && state?.userId === userInfo?.userId
     );
-    if (userInfo?.userId && sameUserConnections.length === 1 && !wasInGracePeriod) {
-      await this.sendPresenceEvent(token, "connect");
+    if (userInfo?.userId && sameUserConnections.length === 1) {
+      const joinMsg = JSON.stringify({
+        type: "user_joined",
+        userId: userInfo.userId,
+        userName: userInfo.userName || `User ${conn.id.slice(0, 4)}`,
+      });
+      for (const connection of Array.from(this.room.getConnections())) {
+        if (connection.id !== conn.id) connection.send(joinMsg);
+      }
+      if (!wasInGracePeriod) {
+        await this.sendPresenceEvent(token, "connect");
+      }
     }
 
     console.log(`New connection to room ${this.room.id}`);
     conn.send(JSON.stringify({ type: "connected", message: `Welcome ${conn.id}` }));
 
-    // Send current room state to new connection
     if (this.slides.length > 0) {
       conn.send(JSON.stringify({
         type: "slide_content",
@@ -304,7 +309,6 @@ export default class Server implements Party.Server {
       }));
     }
 
-    // Sync active host-left timer to the new connection
     if (this.hostLeftEndsAt && !this.hasConnectedHost()) {
       const remainingMs = Math.max(0, this.hostLeftEndsAt - Date.now());
       conn.send(JSON.stringify({
@@ -315,19 +319,17 @@ export default class Server implements Party.Server {
       }));
     }
 
-    // Notify user of their mute status on connect
     if (userInfo?.isMuted) {
       conn.send(JSON.stringify({ type: "mute_status", userId: userInfo.userId, isMuted: true }));
     }
 
-    // Broadcast updated user count
     this.broadcastUserCount();
     await this.updateRoomLifecycle();
   }
 
   async onClose(conn: Party.Connection) {
     console.log(`Connection ${conn.id} closed`);
-    const state = (conn.state as { userId?: string; token?: string } | null) ?? null;
+    const state = (conn.state as { userId?: string; token?: string; userName?: string } | null) ?? null;
     const sameUserStillConnected = this.getConnectionsWithState().some(
       ({ conn: connectedConn, state: connectedState }) =>
         connectedConn.id !== conn.id &&
@@ -338,23 +340,26 @@ export default class Server implements Party.Server {
     if (state?.token && state?.userId && !sameUserStillConnected) {
       const userId = state.userId;
       const token = state.token;
+      const userName = state.userName;
 
-      // Clear any stale timer for this user (safety guard)
       const existing = this.disconnectTimers.get(userId);
       if (existing) clearTimeout(existing);
 
-      // Defer presence disconnect — fire only if user doesn't reconnect within grace period
+      this.room.broadcast(JSON.stringify({
+        type: "user_left",
+        userId,
+        userName: userName || "Someone",
+      }));
+
       const timer = setTimeout(async () => {
         this.disconnectTimers.delete(userId);
         await this.sendPresenceEvent(token, "disconnect");
-        this.broadcastUserCount();
         await this.updateRoomLifecycle();
       }, this.userGraceMs);
 
       this.disconnectTimers.set(userId, timer);
     }
 
-    // Broadcast count immediately — grace period users are still included in the count
     this.broadcastUserCount();
     await this.updateRoomLifecycle();
   }
