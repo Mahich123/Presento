@@ -50,6 +50,9 @@ function WebSocketConnection({
   onMuteStatus,
   onUserJoined,
   onUserLeft,
+  onCursorMove,
+  onCursorHide,
+  onChatWarning,
   wsRef
 }: {
   roomId: string;
@@ -68,6 +71,9 @@ function WebSocketConnection({
   onMuteStatus: (payload: { userId: string; isMuted: boolean }) => void;
   onUserJoined: (userName: string) => void;
   onUserLeft: (userName: string) => void;
+  onCursorMove?: (pos: { x: number; y: number }) => void;
+  onCursorHide?: () => void;
+  onChatWarning: (message: string) => void;
   wsRef: { current: PartySocket | null };
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
@@ -118,10 +124,16 @@ function WebSocketConnection({
         onRoomClosed(data.reason)
       } else if (data.type === 'mute_status') {
         onMuteStatus({ userId: data.userId, isMuted: data.isMuted })
+      } else if (data.type === 'cursor_move') {
+        onCursorMove?.({ x: data.x, y: data.y })
+      } else if (data.type === 'cursor_hide') {
+        onCursorHide?.()
       } else if (data.type === 'user_joined') {
         onUserJoined(data.userName)
       } else if (data.type === 'user_left') {
         onUserLeft(data.userName)
+      } else if (data.type === 'chat_warning') {
+        onChatWarning(data.message)
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
       }
@@ -171,6 +183,8 @@ function RoomContent({
   const [unreadCount, setUnreadCount] = useState(0)
   const [hostLeftRemainingMs, setHostLeftRemainingMs] = useState<number | null>(null)
   const [hostLeftTotalMs, setHostLeftTotalMs] = useState<number | null>(null)
+  const [chatWarning, setChatWarning] = useState<string | null>(null)
+  const chatWarningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const chatOpenRef = useRef<boolean>(false)
   const wsRef = useRef<PartySocket | null>(null);
   const roomRoleRef = useRef(roomRole)
@@ -184,6 +198,10 @@ function RoomContent({
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const slideCacheRef = useRef<Map<string, string>>(new Map());
   const [cachedPageIds, setCachedPageIds] = useState<Set<string>>(new Set());
+  const slideImgRef = useRef<HTMLImageElement | null>(null);
+  const lastCursorSendRef = useRef<number>(0);
+  const [laserCursor, setLaserCursor] = useState<{ x: number; y: number } | null>(null);
+  const [laserEnabled, setLaserEnabled] = useState(false);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -276,8 +294,54 @@ function RoomContent({
       if (joinTimerRef.current) clearTimeout(joinTimerRef.current)
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
       if (notifDismissRef.current) clearTimeout(notifDismissRef.current)
+      if (chatWarningTimerRef.current) clearTimeout(chatWarningTimerRef.current)
     }
   }, [])
+
+  const sendCursorPosition = useCallback((clientX: number, clientY: number) => {
+    if (!wsRef.current || !slideImgRef.current) return
+    const now = Date.now()
+    if (now - lastCursorSendRef.current < 16) return
+    lastCursorSendRef.current = now
+    const rect = slideImgRef.current.getBoundingClientRect()
+    const x = (clientX - rect.left) / rect.width
+    const y = (clientY - rect.top) / rect.height
+    if (x < 0 || x > 1 || y < 0 || y > 1) return
+    wsRef.current.send(JSON.stringify({ type: 'cursor_move', x, y }))
+  }, [])
+
+  const sendCursorHide = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'cursor_hide' }))
+  }, [])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (roomRole !== 'host' || !laserEnabled) return
+    sendCursorPosition(e.clientX, e.clientY)
+  }, [roomRole, laserEnabled, sendCursorPosition])
+
+  const handleMouseLeave = useCallback(() => {
+    if (roomRole !== 'host' || !laserEnabled) return
+    sendCursorHide()
+  }, [roomRole, laserEnabled, sendCursorHide])
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (roomRole !== 'host' || !laserEnabled) return
+    const touch = e.touches[0]
+    if (!touch) return
+    sendCursorPosition(touch.clientX, touch.clientY)
+  }, [roomRole, laserEnabled, sendCursorPosition])
+
+  const handleTouchEnd = useCallback(() => {
+    if (roomRole !== 'host' || !laserEnabled) return
+    sendCursorHide()
+  }, [roomRole, laserEnabled, sendCursorHide])
+
+  const toggleLaser = useCallback(() => {
+    setLaserEnabled(prev => {
+      if (prev) sendCursorHide()
+      return !prev
+    })
+  }, [sendCursorHide])
 
   const handleLeaveRoom = useCallback(() => {
     onRequestLeave()
@@ -431,6 +495,13 @@ function RoomContent({
           onMuteStatus={handleMuteStatus}
           onUserJoined={handleUserJoined}
           onUserLeft={handleUserLeft}
+          onCursorMove={setLaserCursor}
+          onCursorHide={() => setLaserCursor(null)}
+          onChatWarning={(msg) => {
+            setChatWarning(msg)
+            if (chatWarningTimerRef.current) clearTimeout(chatWarningTimerRef.current)
+            chatWarningTimerRef.current = setTimeout(() => setChatWarning(null), 4000)
+          }}
           wsRef={wsRef}
         />
       )}
@@ -496,15 +567,52 @@ function RoomContent({
                 </button>
               </div>
               {slideImage ? (
-                <img
-                  src={slideImage}
-                  alt={`Slide ${currentSlide + 1}`}
-                  className="max-w-full max-h-full object-contain"
-                />
+                <div
+                  className="relative max-w-full max-h-full"
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={handleMouseLeave}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                >
+                  <img
+                    ref={slideImgRef}
+                    src={slideImage}
+                    alt={`Slide ${currentSlide + 1}`}
+                    className="max-w-full max-h-full object-contain block"
+                  />
+                  {laserCursor && roomRole === 'viewer' && (
+                    <div
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: `${laserCursor.x * 100}%`,
+                        top: `${laserCursor.y * 100}%`,
+                        transform: 'translate(-50%, -50%)',
+                      }}
+                    >
+                      <div className="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_4px_rgba(239,68,68,0.7)]" />
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="text-gray-400 text-sm sm:text-base">Loading slide...</div>
               )}
             
+              {roomRole === 'host' && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10">
+                  <button
+                    onClick={toggleLaser}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all shadow-md ${
+                      laserEnabled
+                        ? 'bg-red-500 text-white shadow-red-500/40'
+                        : 'bg-black/60 text-white/80 hover:bg-black/75'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${laserEnabled ? 'bg-white animate-pulse' : 'bg-white/50'}`} />
+                    {laserEnabled ? 'Laser On' : 'Laser Off'}
+                  </button>
+                </div>
+              )}
+
               <div className={`absolute left-2 right-2 sm:left-4 sm:right-4 top-1/2 flex -translate-y-1/2 justify-between pointer-events-none ${roomRole === 'viewer' ? 'hidden' : ''}`}>
                 <button
                   className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
@@ -666,6 +774,14 @@ function RoomContent({
             </div>
 
             <div className="p-2 sm:p-3 border-t border-gray-200 shrink-0">
+              {chatWarning && (
+                <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-amber-50 border border-amber-200">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="size-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                  <p className="text-xs text-amber-700 font-medium">{chatWarning}</p>
+                </div>
+              )}
               {isMuted ? (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200">
                   <Ban className="size-4 text-red-500 shrink-0" />

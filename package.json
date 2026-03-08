@@ -20,6 +20,7 @@
     "partykit": "0.0.115"
   },
   "dependencies": {
+    "bad-words": "^4.0.0",
     "better-auth": "^1.3.33",
     "hono": "^4.10.4",
     "nanoid": "^5.1.6",

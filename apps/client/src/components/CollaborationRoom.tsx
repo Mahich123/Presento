@@ -587,6 +587,7 @@ export default function CollaborationRoom() {
             {toast ? (
                 <Toast
                     message={toast.message}
+                    variant={toast.type}
                     onClose={() => setToast(null)}
                 />
             ) : null}

@@ -1,4 +1,7 @@
 import type * as Party from "partykit/server";
+import { Filter } from "bad-words";
+
+const filter = new Filter();
 
 export default class Server implements Party.Server {
   slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
@@ -417,16 +420,29 @@ export default class Server implements Party.Server {
           return;
         }
         const userName = state?.userName || `User ${sender.id.slice(0, 4)}`;
+        const raw = String(data.message ?? "");
+        const hasProfanity = filter.isProfane(raw);
+        const cleanMessage = hasProfanity ? filter.clean(raw) : raw;
         this.room.broadcast(
           JSON.stringify({
             type: "chat_message",
             id: `${sender.id}-${Date.now()}`,
             userId: state?.userId || sender.id,
             userName: userName,
-            message: data.message,
+            message: cleanMessage,
             timestamp: Date.now()
           })
         );
+        if (hasProfanity) {
+          sender.send(JSON.stringify({
+            type: "chat_warning",
+            message: "Your message contained inappropriate language and was filtered."
+          }));
+        }
+      } else if (data.type === "cursor_move" || data.type === "cursor_hide") {
+        const senderState = sender.state as { role?: string } | null;
+        if (senderState?.role !== "host") return;
+        this.room.broadcast(JSON.stringify(data), [sender.id]);
       } else if (data.type === "mute_user") {
         const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
         if (senderState?.role !== "host") {
