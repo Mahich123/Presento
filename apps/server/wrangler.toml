@@ -1,0 +1,9 @@
+name = "presento-server"
+main = "src/workers.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Add non-secret env vars here. Secrets go in wrangler secret put <NAME>
+# BACKEND_BASE_URL = "https://your-worker.workers.dev"
+# TRUSTED_ORIGINS = "https://your-frontend.com"

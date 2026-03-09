@@ -1,9 +1,12 @@
 import { drizzle } from 'drizzle-orm/libsql';
-import { env } from '../lib/env';
+import { createClient } from '@libsql/client/web';
+import type { ENV } from '../lib/env';
 
-export const db = drizzle({ 
-  connection: { 
-    url: env.TURSO_DB_URL, 
-    authToken: env.TURSO_DB_AUTH_TOKEN
-  }
-});
+export function createDb(env: ENV) {
+  const client = createClient({
+    url: env.TURSO_DB_URL,
+    authToken: env.TURSO_DB_AUTH_TOKEN,
+  });
+  return drizzle(client);
+}
+
