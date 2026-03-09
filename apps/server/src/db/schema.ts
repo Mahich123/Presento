@@ -1,6 +1,15 @@
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { env } from "../lib/env";
 import { nanoid } from "nanoid";
+
+const client = createClient({
+  url: env.TURSO_DB_URL,
+  authToken: env.TURSO_DB_AUTH_TOKEN,
+});
+export const db = drizzle(client);
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),

@@ -1,11 +1,10 @@
 {
   "name": "presento",
   "scripts": {
-    "dev": "bun run --hot src/bun.ts",
+    "dev": "bun run --hot src/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "deploy": "wrangler deploy",
     "build": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,7 +16,6 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.6",
-    "wrangler": "^4.71.0"
+    "drizzle-kit": "^0.31.6"
   }
 }

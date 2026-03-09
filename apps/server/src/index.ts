@@ -1,34 +1,37 @@
 import { Hono } from "hono";
-import { createAuth } from "./lib/auth";
+import { auth } from "./lib/auth";
 import { cors } from "hono/cors";
-import { type ENV } from "./lib/env";
+import { env } from "./lib/env";
 import { google } from "googleapis";
-import { createDb } from "./db";
+import { db } from "./db";
 import { account, room, roomParticipant, roomSlide, session as authSession, user } from "./db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
-const app = new Hono<{ Bindings: ENV }>()
+const oauth2Client = new google.auth.OAuth2(
+  env.GOOGLE_CLIENT_ID,
+  env.GOOGLE_CLIENT_SECRET,
+  env.GOOGLE_REDIRECT_URL
+);
+
+const app = new Hono()
   .basePath("/api")
 
   .use(
     "*",
-    async (c, next) => {
-      return cors({
-        origin: c.env.TRUSTED_ORIGINS ? c.env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
-        allowHeaders: ["Content-Type", "Authorization"],
-        allowMethods: ["POST", "GET", "OPTIONS"],
-        exposeHeaders: ["Content-Length"],
-        credentials: true,
-      })(c, next);
-    }
+    cors({
+      origin: env.TRUSTED_ORIGINS ? env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
+      allowHeaders: ["Content-Type", "Authorization"],
+      allowMethods: ["POST", "GET", "OPTIONS"],
+      exposeHeaders: ["Content-Length"],
+      credentials: true,
+    })
   )
   .get("/", (c) => {
     return c.text("Hello Hono!");
   })
   .on(["POST", "GET"], "/auth/*", (c) => {
-    const auth = createAuth(c.env);
     return auth.handler(c.req.raw);
   })
   .post(
@@ -37,8 +40,6 @@ const app = new Hono<{ Bindings: ENV }>()
     async (c) => {
     const roomId = c.req.param("roomId");
     const authHeader = c.req.header("Authorization");
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -110,7 +111,7 @@ const app = new Hono<{ Bindings: ENV }>()
       return c.json({ error: "Failed to create room" }, 500);
     }
 
-    const partyKitUrl = `${c.env.PARTYKIT_SERVER_URL}/parties/main/${roomId}`;
+    const partyKitUrl = `${env.PARTYKIT_SERVER_URL}/parties/main/${roomId}`;
 
     const bodyText = JSON.stringify(body);
 
@@ -127,8 +128,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
   .post("/party/:roomId/leave", async (c) => {
     const roomId = c.req.param("roomId");
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -162,8 +161,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
   .post("/party/:roomId/presence", async (c) => {
     const roomId = c.req.param("roomId");
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -220,8 +217,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
   .post("/party/:roomId/close", async (c) => {
     const roomId = c.req.param("roomId");
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -257,7 +252,6 @@ const app = new Hono<{ Bindings: ENV }>()
       return c.json({ error: "Missing bearer token" }, 401);
     }
 
-    const db = createDb(c.env);
     const roomId = c.req.query("roomId");
 
     const rows = await db
@@ -313,7 +307,6 @@ const app = new Hono<{ Bindings: ENV }>()
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
     if (!token) return c.json({ error: "Not authenticated" }, 401);
 
-    const db = createDb(c.env);
     const sessionRows = await db
       .select({ userId: user.id })
       .from(authSession)
@@ -367,8 +360,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
 
   .post("/room-slide", async (c) => {
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: "Not authenticated" }, 401);
 
@@ -407,8 +398,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
 
   .get("linkGoogle", async (c) => {
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -444,11 +433,6 @@ const app = new Hono<{ Bindings: ENV }>()
         return c.json({ error: "No refresh token available" }, 400);
       }
 
-      const oauth2Client = new google.auth.OAuth2(
-        c.env.GOOGLE_CLIENT_ID,
-        c.env.GOOGLE_CLIENT_SECRET,
-        c.env.GOOGLE_REDIRECT_URL
-      );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
       });
@@ -486,7 +470,6 @@ const app = new Hono<{ Bindings: ENV }>()
   })
 
   .get("getallAccounts/:userId", async (c) => {
-    const db = createDb(c.env);
     const userId = c.req.param("userId");
     const accountProviders = await db
       .select({
@@ -505,8 +488,6 @@ const app = new Hono<{ Bindings: ENV }>()
     const { presentationId, pageObjectId } = c.req.param();
     const { roomId } = c.req.valid("query");
 
-    const auth = createAuth(c.env);
-    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -557,11 +538,6 @@ const app = new Hono<{ Bindings: ENV }>()
         return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
       }
 
-      const oauth2Client = new google.auth.OAuth2(
-        c.env.GOOGLE_CLIENT_ID,
-        c.env.GOOGLE_CLIENT_SECRET,
-        c.env.GOOGLE_REDIRECT_URL
-      );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
       });
@@ -674,11 +650,11 @@ const app = new Hono<{ Bindings: ENV }>()
     }
   });
 
-// export default {
-//   port: env.PORT,
-//   fetch: app.fetch,
-//   hostname: '0.0.0.0'
-// };
+export default {
+  port: env.PORT,
+  fetch: app.fetch,
+  hostname: '0.0.0.0'
+};
 
 export type AppType = typeof app;
 export { app };
