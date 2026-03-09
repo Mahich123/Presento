@@ -1,43 +1,39 @@
 import { Hono } from "hono";
-import { auth } from "./lib/auth";
+import { createAuth } from "./lib/auth";
 import { cors } from "hono/cors";
-import { env } from "./lib/env";
+import { type ENV } from "./lib/env";
 import { google } from "googleapis";
-import { db } from "./db";
+import { createDb } from "./db";
 import { account, room, roomParticipant, roomSlide, session as authSession, user } from "./db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 
-const oauth2Client = new google.auth.OAuth2(
-  env.GOOGLE_CLIENT_ID,
-  env.GOOGLE_CLIENT_SECRET,
-  env.GOOGLE_REDIRECT_URL
-);
-
-const app = new Hono()
+const app = new Hono<{ Bindings: ENV }>()
   .basePath("/api")
 
-  .use(
-    "*",
-    cors({
-      origin: env.TRUSTED_ORIGINS ? env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
+  .use("*", async (c, next) => {
+    return cors({
+      origin: c.env.TRUSTED_ORIGINS ? c.env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
       allowHeaders: ["Content-Type", "Authorization"],
       allowMethods: ["POST", "GET", "OPTIONS"],
       exposeHeaders: ["Content-Length"],
       credentials: true,
-    })
-  )
+    })(c, next);
+  })
   .get("/", (c) => {
     return c.text("Hello Hono!");
   })
   .on(["POST", "GET"], "/auth/*", (c) => {
+    const auth = createAuth(c.env);
     return auth.handler(c.req.raw);
   })
   .post(
     "/party/:roomId",
     zValidator("json", z.object({ isJoining: z.boolean().optional() })),
     async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const authHeader = c.req.header("Authorization");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -111,7 +107,7 @@ const app = new Hono()
       return c.json({ error: "Failed to create room" }, 500);
     }
 
-    const partyKitUrl = `${env.PARTYKIT_SERVER_URL}/parties/main/${roomId}`;
+    const partyKitUrl = `${c.env.PARTYKIT_SERVER_URL}/parties/main/${roomId}`;
 
     const bodyText = JSON.stringify(body);
 
@@ -127,6 +123,8 @@ const app = new Hono()
     return c.json({ role: userRole }, resp.status as 200);
   })
   .post("/party/:roomId/leave", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
@@ -160,6 +158,8 @@ const app = new Hono()
     return c.json({ success: true, deleted: false });
   })
   .post("/party/:roomId/presence", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
@@ -216,6 +216,8 @@ const app = new Hono()
     return c.json({ success: true, deleted: false });
   })
   .post("/party/:roomId/close", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
@@ -243,6 +245,7 @@ const app = new Hono()
   })
 
   .get("/party/session-user", async (c) => {
+    const db = createDb(c.env);
     const authHeader = c.req.header("Authorization");
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.slice(7).trim()
@@ -300,6 +303,7 @@ const app = new Hono()
   })
 
   .post("/party/:roomId/mute/:targetUserId", async (c) => {
+    const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const targetUserId = c.req.param("targetUserId");
 
@@ -360,6 +364,8 @@ const app = new Hono()
   })
 
   .post("/room-slide", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: "Not authenticated" }, 401);
 
@@ -398,6 +404,8 @@ const app = new Hono()
   })
 
   .get("linkGoogle", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
     if (!session) {
@@ -433,6 +441,11 @@ const app = new Hono()
         return c.json({ error: "No refresh token available" }, 400);
       }
 
+      const oauth2Client = new google.auth.OAuth2(
+        c.env.GOOGLE_CLIENT_ID,
+        c.env.GOOGLE_CLIENT_SECRET,
+        c.env.GOOGLE_REDIRECT_URL
+      );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
       });
@@ -470,6 +483,7 @@ const app = new Hono()
   })
 
   .get("getallAccounts/:userId", async (c) => {
+    const db = createDb(c.env);
     const userId = c.req.param("userId");
     const accountProviders = await db
       .select({
@@ -485,6 +499,8 @@ const app = new Hono()
   .get("slideimage/:presentationId/:pageObjectId",
     zValidator("query", z.object({ roomId: z.string().optional() })),
     async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
     const { presentationId, pageObjectId } = c.req.param();
     const { roomId } = c.req.valid("query");
 
@@ -538,6 +554,11 @@ const app = new Hono()
         return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
       }
 
+      const oauth2Client = new google.auth.OAuth2(
+        c.env.GOOGLE_CLIENT_ID,
+        c.env.GOOGLE_CLIENT_SECRET,
+        c.env.GOOGLE_REDIRECT_URL
+      );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
       });
@@ -650,11 +671,11 @@ const app = new Hono()
     }
   });
 
-export default {
-  port: env.PORT,
-  fetch: app.fetch,
-  hostname: '0.0.0.0'
-};
+// export default {
+//   port: env.PORT,
+//   fetch: app.fetch,
+//   hostname: '0.0.0.0'
+// };
 
 export type AppType = typeof app;
 export { app };

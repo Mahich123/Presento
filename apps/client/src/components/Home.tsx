@@ -1,8 +1,12 @@
 import Header from "./Header"
 import { Link } from "@tanstack/react-router"
 import { Users, Globe, RefreshCw } from "lucide-react"
+import userAuth from "../utils/userSession"
 
 export default function Home() {
+    const { session } = userAuth()
+    const ctaTo = session ? "/dashboard" : "/signup"
+    const ctaText = session ? "Dashboard" : "Get Started Free"
 
     return (
         <div className="min-h-screen">
@@ -17,8 +21,8 @@ export default function Home() {
 
 
                 <div className="flex gap-3 sm:gap-4 justify-center mb-12">
-                    <Link to="/signup" className="bg-[#BB8856] hover:bg-[#A87744] text-white font-semibold text-sm sm:text-base px-5 py-2.5 sm:px-8 sm:py-3 rounded-xl shadow-md transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5">
-                        Get Started Free
+                    <Link to={ctaTo} className="bg-[#BB8856] hover:bg-[#A87744] text-white font-semibold text-sm sm:text-base px-5 py-2.5 sm:px-8 sm:py-3 rounded-xl shadow-md transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5">
+                        {ctaText}
                     </Link>
                     <a href="#how-it-works" className="border border-[#BB8856] text-[#BB8856] font-semibold text-sm sm:text-base px-5 py-2.5 sm:px-8 sm:py-3 rounded-xl transition-all duration-200">
                         See How It Works

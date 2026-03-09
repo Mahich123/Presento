@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/libsql';
 
 import { createClient } from '@libsql/client/web';
-import type { ENV } from '../lib/env';
+import type { ENV } from './lib/env';
 
 export function createDb(env: ENV) {
   const client = createClient({
