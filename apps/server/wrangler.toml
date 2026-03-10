@@ -9,4 +9,3 @@ compatibility_flags = ["nodejs_compat"]
 BACKEND_BASE_URL = "https://presento-server.presento.workers.dev"
 TRUSTED_ORIGINS = "https://presentoo.vercel.app"
 PARTYKIT_SERVER_URL = "https://my-partykit-app.mahich123.partykit.dev"
-BETTER_AUTH_URL = "https://presentoo.vercel.app/"

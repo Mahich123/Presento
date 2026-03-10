@@ -1,12 +1,12 @@
-import { drizzle } from 'drizzle-orm/libsql';
+import { app } from "./index";
 
-import { createClient } from '@libsql/client/web';
-import type { ENV } from './lib/env';
+const port = Number(process.env.PORT) || 4002;
 
-export function createDb(env: ENV) {
-  const client = createClient({
-    url: env.TURSO_DB_URL,
-    authToken: env.TURSO_DB_AUTH_TOKEN,
-  });
-  return drizzle(client);
-}
+Bun.serve({
+  port,
+  fetch(req) {
+    return app.fetch(req, process.env);
+  },
+});
+
+console.log(`Server running at http://localhost:${port}`);

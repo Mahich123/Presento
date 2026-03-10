@@ -43,5 +43,11 @@ export function createAuth(env: ENV) {
   trustedOrigins: env.TRUSTED_ORIGINS 
     ? env.TRUSTED_ORIGINS.split(",") 
     : ["http://localhost:5173"],
+  advanced: {
+    defaultCookieAttributes: {
+      sameSite: "none",
+      secure: true,
+    },
+  },
 });
 }

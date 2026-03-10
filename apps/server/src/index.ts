@@ -15,9 +15,9 @@ const app = new Hono<{ Bindings: ENV }>()
   .use("*", async (c, next) => {
     return cors({
       origin: c.env.TRUSTED_ORIGINS ? c.env.TRUSTED_ORIGINS.split(",") : ["http://localhost:5173"],
-      allowHeaders: ["Content-Type", "Authorization"],
-      allowMethods: ["POST", "GET", "OPTIONS"],
-      exposeHeaders: ["Content-Length"],
+      allowHeaders: ["Content-Type", "Authorization", "Cookie"],
+      allowMethods: ["POST", "GET", "OPTIONS", "DELETE", "PUT", "PATCH"],
+      exposeHeaders: ["Content-Length", "Set-Cookie"],
       credentials: true,
     })(c, next);
   })
