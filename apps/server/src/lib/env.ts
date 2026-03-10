@@ -10,6 +10,7 @@ export const envSchema = z.object({
   GOOGLE_REDIRECT_URL: z.string(),
   PARTYKIT_SERVER_URL: z.string(),
   BACKEND_BASE_URL: z.string(),
+  BETTER_AUTH_SECRET: z.string(),
   TRUSTED_ORIGINS: z.string().optional(),
   PORT: z.coerce.number().optional()
 })

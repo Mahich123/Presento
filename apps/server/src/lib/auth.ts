@@ -39,6 +39,7 @@ export function createAuth(env: ENV) {
     },
   },
   baseURL: env.BACKEND_BASE_URL!,
+  secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: env.TRUSTED_ORIGINS 
     ? env.TRUSTED_ORIGINS.split(",") 
     : ["http://localhost:5173"],
