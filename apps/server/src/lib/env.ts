@@ -7,7 +7,6 @@ export const envSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string(),
   GOOGLE_CLIENT_ID: z.string(),
   GOOGLE_CLIENT_SECRET: z.string(),
-  GOOGLE_REDIRECT_URL: z.string(),
   PARTYKIT_SERVER_URL: z.string(),
   BACKEND_BASE_URL: z.string(),
   BETTER_AUTH_SECRET: z.string(),
