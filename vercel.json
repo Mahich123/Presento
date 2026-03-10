@@ -2,5 +2,11 @@
   "buildCommand": "bun run --cwd apps/client build",
   "outputDirectory": "apps/client/dist",
   "installCommand": "bun install",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://presento-server.presento.workers.dev/api/:path*"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

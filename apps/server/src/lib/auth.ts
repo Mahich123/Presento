@@ -21,7 +21,7 @@ export function createAuth(env: ENV) {
       google: {
         clientId: env.GOOGLE_CLIENT_ID,
         clientSecret: env.GOOGLE_CLIENT_SECRET,
-        redirectURI: env.GOOGLE_REDIRECT_URL,
+        redirectURI: `${env.BACKEND_BASE_URL}/api/auth/callback/google`,
         scope: [
           "openid",
           "email",

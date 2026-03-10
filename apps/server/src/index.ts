@@ -444,7 +444,7 @@ const app = new Hono<{ Bindings: ENV }>()
       const oauth2Client = new google.auth.OAuth2(
         c.env.GOOGLE_CLIENT_ID,
         c.env.GOOGLE_CLIENT_SECRET,
-        c.env.GOOGLE_REDIRECT_URL
+        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
       );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
@@ -557,7 +557,7 @@ const app = new Hono<{ Bindings: ENV }>()
       const oauth2Client = new google.auth.OAuth2(
         c.env.GOOGLE_CLIENT_ID,
         c.env.GOOGLE_CLIENT_SECRET,
-        c.env.GOOGLE_REDIRECT_URL
+        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
       );
       oauth2Client.setCredentials({
         refresh_token: refreshToken,
