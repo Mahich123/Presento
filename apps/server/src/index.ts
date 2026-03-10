@@ -26,7 +26,12 @@ const app = new Hono<{ Bindings: ENV }>()
   })
   .on(["POST", "GET"], "/auth/*", (c) => {
     const auth = createAuth(c.env);
-    return auth.handler(c.req.raw);
+    const base = new URL(c.env.BACKEND_BASE_URL);
+    const incoming = new URL(c.req.raw.url);
+    incoming.protocol = base.protocol;
+    incoming.host = base.host;
+    const rewritten = new Request(incoming.toString(), c.req.raw);
+    return auth.handler(rewritten);
   })
   .post(
     "/party/:roomId",
