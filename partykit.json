@@ -1,8 +1,11 @@
 {
   "name": "my-partykit-app",
   "main": "party/index.ts",
-   "serve": {
+  "serve": {
     "host": "0.0.0.0",
     "port": 1999
+  },
+  "vars": {
+    "BACKEND_BASE_URL": "https://presentoo.vercel.app"
   }
 }

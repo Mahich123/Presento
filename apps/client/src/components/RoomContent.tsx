@@ -35,8 +35,6 @@ const useMockApi = import.meta.env.VITE_USE_MOCK_API === 'true'
 
 function WebSocketConnection({
   roomId,
-  presentationId,
-  token,
   sessionToken,
   onConnected,
   onSlideContent,
@@ -56,8 +54,6 @@ function WebSocketConnection({
   wsRef
 }: {
   roomId: string;
-  presentationId: string;
-  token: string;
   sessionToken: string;
   onConnected: (connected: boolean) => void;
   onSlideContent: (slides: MockSlideProps[], presentationId?: string) => void;
@@ -84,16 +80,8 @@ function WebSocketConnection({
     query: { token: sessionToken },
 
     onOpen() {
-      console.log('WebSocket connected. PresentationId:', presentationId)
+      console.log('WebSocket connected')
       onConnected(true)
-      if (presentationId) {
-        console.log('Sending load_slide on connection')
-        ws.send(JSON.stringify({
-          type: 'load_slide',
-          presentationId: presentationId,
-          token: token
-        }))
-      }
     },
     onMessage(e) {
       const data = JSON.parse(e.data);
@@ -467,8 +455,6 @@ function RoomContent({
       {!useMockApi && roomId && sessionToken && (
         <WebSocketConnection
           roomId={roomId}
-          presentationId={presentationId}
-          token={token}
           sessionToken={sessionToken}
           onConnected={setSocketConnected}
           onSlideContent={handleSlideContent}

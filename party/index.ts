@@ -84,9 +84,7 @@ export default class Server implements Party.Server {
   }
 
   async resolveUserNameFromSessionToken(token: string) {
-    const backendBaseUrl =
-      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
-        ?.BACKEND_BASE_URL || "http://localhost:4002";
+    const backendBaseUrl = this.getBackendBaseUrl();
 
     try {
       const response = await fetch(`${backendBaseUrl}/api/party/session-user?roomId=${encodeURIComponent(this.room.id)}`, {
@@ -129,8 +127,7 @@ export default class Server implements Party.Server {
 
   getBackendBaseUrl() {
     return (
-      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
-        ?.BACKEND_BASE_URL || "http://localhost:4002"
+      (this.room.env as Record<string, string>)?.BACKEND_BASE_URL || "http://localhost:4002"
     );
   }
 
@@ -332,7 +329,7 @@ export default class Server implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     console.log(`Connection ${conn.id} closed`);
-    const state = (conn.state as { userId?: string; token?: string; userName?: string } | null) ?? null;
+    const state = (conn.state as { userId?: string; token?: string; userName?: string; role?: string } | null) ?? null;
     const sameUserStillConnected = this.getConnectionsWithState().some(
       ({ conn: connectedConn, state: connectedState }) =>
         connectedConn.id !== conn.id &&
@@ -344,6 +341,7 @@ export default class Server implements Party.Server {
       const userId = state.userId;
       const token = state.token;
       const userName = state.userName;
+      const role = state.role;
 
       const existing = this.disconnectTimers.get(userId);
       if (existing) clearTimeout(existing);
@@ -361,6 +359,13 @@ export default class Server implements Party.Server {
       }, this.userGraceMs);
 
       this.disconnectTimers.set(userId, timer);
+
+      // For host: delay lifecycle update by the same grace period so a quick
+      // reconnect doesn't immediately broadcast host_left to viewers.
+      if (role === "host") {
+        this.broadcastUserCount();
+        return;
+      }
     }
 
     this.broadcastUserCount();
@@ -390,9 +395,12 @@ export default class Server implements Party.Server {
           return;
         }
 
+        const isNewPresentation = this.presentationId !== data.presentationId;
         this.slides = slideContent;
         this.presentationId = data.presentationId;
-        this.currentSlideIndex = 0;
+        if (isNewPresentation) {
+          this.currentSlideIndex = 0;
+        }
 
         this.room.broadcast(
           JSON.stringify({
