@@ -7,7 +7,7 @@
   "scripts": {
     "dev:backend": "bun run --cwd apps/server dev",
     "dev:frontend": "bun run --cwd apps/client dev",
-    "dev:party": "bunx partykit dev party/index.ts",
+    "dev:party": "bunx partykit dev party/index.ts --var BACKEND_BASE_URL=http://localhost:4002",
     "dev:all": "concurrently \"bun run dev:backend\" \"bun run dev:frontend\" \"bun run dev:party\"",
     "build": "bun run --cwd apps/server build && bun run --cwd apps/client build",
     "prepare": "husky || true"

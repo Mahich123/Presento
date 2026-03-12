@@ -71,12 +71,13 @@ export default class Server implements Party.Server {
   }
 
   broadcastUserCount() {
-    const activeUserIds = new Set(
+    // Use userId when resolved; fall back to connection ID so users whose
+    // session couldn't be resolved yet (backend cold-start) are still counted.
+    const uniqueIds = new Set(
       this.getConnectionsWithState()
-        .map(({ state }) => state?.userId)
-        .filter((id): id is string => !!id)
+        .map(({ conn, state }) => state?.userId ?? conn.id)
     );
-    const count = activeUserIds.size;
+    const count = uniqueIds.size;
     this.room.broadcast(JSON.stringify({
       type: "user_count",
       count,
@@ -85,16 +86,19 @@ export default class Server implements Party.Server {
 
   async resolveUserNameFromSessionToken(token: string) {
     const backendBaseUrl = this.getBackendBaseUrl();
+    const url = `${backendBaseUrl}/api/party/session-user?roomId=${encodeURIComponent(this.room.id)}`;
+    const headers = { Authorization: `Bearer ${token}` };
 
-    try {
-      const response = await fetch(`${backendBaseUrl}/api/party/session-user?roomId=${encodeURIComponent(this.room.id)}`, {
+    const tryFetch = async () => {
+      const response = await fetch(url, {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
+        signal: AbortSignal.timeout(5000),
       });
-
-      if (!response.ok) return null;
+      if (!response.ok) {
+        console.error(`resolveUser: backend returned ${response.status}`);
+        return null;
+      }
       const data = await response.json() as { userId?: string; userName?: string; role?: "host" | "viewer" | null; isMuted?: boolean };
       return {
         userId: data.userId,
@@ -102,8 +106,22 @@ export default class Server implements Party.Server {
         role: data.role ?? undefined,
         isMuted: data.isMuted ?? false,
       };
+    };
+
+    // Attempt 1
+    try {
+      const result = await tryFetch();
+      if (result) return result;
     } catch (error) {
-      console.error("Failed to resolve user from session token:", error);
+      console.error("resolveUser attempt 1 failed:", error);
+    }
+
+    // Retry once after 800ms — handles backend cold-starts and transient errors
+    await new Promise(r => setTimeout(r, 800));
+    try {
+      return await tryFetch();
+    } catch (error) {
+      console.error("resolveUser attempt 2 failed:", error);
       return null;
     }
   }
@@ -324,7 +342,36 @@ export default class Server implements Party.Server {
     }
 
     this.broadcastUserCount();
-    await this.updateRoomLifecycle();
+    // Only run lifecycle check when a host connects. Running it for every viewer
+    // connection causes a false host_left timer to start if the host's role
+    // wasn't resolved yet (e.g. backend cold-start). The timer is correctly
+    // driven by onClose's grace-period path when the host truly disconnects.
+    if (userInfo?.role === "host") {
+      await this.updateRoomLifecycle();
+    }
+
+    // If resolveUser failed (cold-start / transient error), schedule a background
+    // re-resolve so the connection gets its real role and userId without needing
+    // the user to reconnect.
+    if (!userInfo) {
+      setTimeout(async () => {
+        const isStillConnected = Array.from(this.room.getConnections()).some(c => c.id === conn.id);
+        if (!isStillConnected) return;
+        const retryInfo = await this.resolveUserNameFromSessionToken(token);
+        if (!retryInfo) return;
+        conn.setState({
+          token,
+          userId: retryInfo.userId,
+          userName: retryInfo.userName || `User ${conn.id.slice(0, 4)}`,
+          role: retryInfo.role || "viewer",
+          isMuted: retryInfo.isMuted ?? false,
+        });
+        this.broadcastUserCount();
+        if (retryInfo.role === "host") {
+          await this.updateRoomLifecycle();
+        }
+      }, 3000);
+    }
   }
 
   async onClose(conn: Party.Connection) {
@@ -369,7 +416,12 @@ export default class Server implements Party.Server {
     }
 
     this.broadcastUserCount();
-    await this.updateRoomLifecycle();
+    // Only update lifecycle if we know who disconnected. Connections whose userId
+    // couldn't be resolved (backend cold-start) must not trigger the host_left
+    // timer — we can't know their true role from the fallback "viewer" state.
+    if (state?.userId) {
+      await this.updateRoomLifecycle();
+    }
   }
 
   async onMessage(message: string, sender: Party.Connection) {

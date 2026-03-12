@@ -155,9 +155,12 @@ export default function CollaborationRoom() {
         })
         const data = await res.json()
 
-        setHasGoogle(Array.isArray(data) && data.some((acc: { providerId: string }) => acc.providerId === 'google'))
-
-        setAccessToken(Array.isArray(data) ? (data.find((acc) => acc.providerId === 'google')?.accessToken ?? '') : '')
+        const googleAccount = Array.isArray(data)
+            ? data.find((acc) => acc.providerId === 'google')
+            : undefined
+        const token = googleAccount?.accessToken ?? ''
+        setHasGoogle(Boolean(googleAccount))
+        setAccessToken(token)
     }
 
     useEffect(() => {
@@ -353,8 +356,8 @@ export default function CollaborationRoom() {
                         <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'join'
                                 ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
                                 : selectedCard === 'create'
-                                    ? 'w-full sm:w-96 max-h-[32rem] opacity-100'
-                                    : 'w-full sm:w-72 max-h-[32rem] opacity-100'
+                                    ? 'w-full sm:w-96 max-h-128 opacity-100'
+                                    : 'w-full sm:w-72 max-h-128 opacity-100'
                             }`}>
                             <div
                                 className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'create'
@@ -418,8 +421,8 @@ export default function CollaborationRoom() {
                         <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'create'
                                 ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
                                 : selectedCard === 'join'
-                                    ? 'w-full sm:w-96 max-h-[34rem] opacity-100'
-                                    : 'w-full sm:w-72 max-h-[34rem] opacity-100'
+                                    ? 'w-full sm:w-96 max-h-136 opacity-100'
+                                    : 'w-full sm:w-72 max-h-136 opacity-100'
                             }`}>
                             <div
                                 className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'join'
@@ -488,7 +491,7 @@ export default function CollaborationRoom() {
 
                     <div className="divider">Add Files to Collaborate</div>
 
-                    {!hasGoogle ? (
+                    {(!hasGoogle || !accessToken) ? (
                         <div className="text-center py-4">
                             <p className="text-gray-600 mb-4 text-sm sm:text-base">
                                 Connect your Google account to access Drive files for collaboration

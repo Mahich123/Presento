@@ -51,7 +51,8 @@ function WebSocketConnection({
   onCursorMove,
   onCursorHide,
   onChatWarning,
-  wsRef
+  wsRef,
+  onConnectionClose
 }: {
   roomId: string;
   sessionToken: string;
@@ -71,6 +72,8 @@ function WebSocketConnection({
   onCursorHide?: () => void;
   onChatWarning: (message: string) => void;
   wsRef: { current: PartySocket | null };
+  onConnectionError?: (message: string) => void;
+  onConnectionClose?: () => void;
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
 
@@ -128,9 +131,13 @@ function WebSocketConnection({
     },
     onClose() {
       onConnected(false)
+      onConnectionClose?.()
     },
     onError(e) {
       console.error('WebSocket error:', e)
+      // Don't surface the error immediately — partysocket will auto-retry.
+      // The 8-second timeout in RoomContent will show an error if the
+      // connection still hasn't succeeded by then.
     }
   })
 
@@ -177,6 +184,7 @@ function RoomContent({
   const wsRef = useRef<PartySocket | null>(null);
   const roomRoleRef = useRef(roomRole)
   useEffect(() => { roomRoleRef.current = roomRole }, [roomRole])
+  useEffect(() => { socketConnectedRef.current = socketConnected }, [socketConnected])
   const joinBatchRef = useRef<string[]>([])
   const leaveBatchRef = useRef<string[]>([])
   const joinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -190,6 +198,10 @@ function RoomContent({
   const lastCursorSendRef = useRef<number>(0);
   const [laserCursor, setLaserCursor] = useState<{ x: number; y: number } | null>(null);
   const [laserEnabled, setLaserEnabled] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [socketRetryKey, setSocketRetryKey] = useState(0)
+  const socketConnectedRef = useRef(false)
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -443,6 +455,19 @@ function RoomContent({
 
   console.log('socketConnected', socketConnected)
 
+  useEffect(() => {
+    if (useMockApi || !roomId || !sessionToken) return
+    setConnecting(true)
+    setConnectionError(null)
+    const timer = setTimeout(() => {
+      if (!socketConnectedRef.current) {
+        setConnectionError('Still connecting. Please check the room server and try again.')
+        setConnecting(false)
+      }
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [roomId, sessionToken, socketRetryKey])
+
   return (
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
 
@@ -454,9 +479,20 @@ function RoomContent({
 
       {!useMockApi && roomId && sessionToken && (
         <WebSocketConnection
+          key={socketRetryKey}
           roomId={roomId}
           sessionToken={sessionToken}
-          onConnected={setSocketConnected}
+          onConnected={(connected) => {
+            setSocketConnected(connected)
+            if (connected) {
+              setConnectionError(null)
+              setConnecting(false)
+              setHostLeftRemainingMs(null)
+              setHostLeftTotalMs(null)
+            } else if (!connectionError) {
+              setConnecting(false)
+            }
+          }}
           onSlideContent={handleSlideContent}
           onSlideChange={setCurrentSlide}
           onUserCount={setUserCount}
@@ -489,6 +525,16 @@ function RoomContent({
             chatWarningTimerRef.current = setTimeout(() => setChatWarning(null), 4000)
           }}
           wsRef={wsRef}
+          onConnectionError={(message) => {
+            setConnectionError(message)
+            setConnecting(false)
+          }}
+          onConnectionClose={() => {
+            if (socketConnected) {
+              setConnectionError('Disconnected from the room.')
+            }
+            setConnecting(false)
+          }}
         />
       )}
 
@@ -798,8 +844,26 @@ function RoomContent({
       ) : (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <span className="loading loading-spinner loading-lg"></span>
-            <p className="mt-2 text-gray-600">Connecting to room...</p>
+            {!sessionToken ? (
+              <p className="mt-2 text-gray-600">Waiting for session...</p>
+            ) : connectionError ? (
+              <>
+                <p className="text-red-600 text-sm sm:text-base">{connectionError}</p>
+                <button
+                  className="btn btn-sm btn-outline mt-3"
+                  onClick={() => setSocketRetryKey(prev => prev + 1)}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="loading loading-spinner loading-lg"></span>
+                <p className="mt-2 text-gray-600">
+                  {connecting ? 'Connecting to room...' : 'Preparing room...'}
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}

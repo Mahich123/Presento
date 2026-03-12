@@ -274,10 +274,11 @@ const app = new Hono<{ Bindings: ENV }>()
     }
 
     let role: "host" | "viewer" | null = null;
-
+    let isMuted = false;
+    
     if (roomId) {
       const participant = await db
-        .select({ role: roomParticipant.role })
+        .select({ role: roomParticipant.role, isMuted: roomParticipant.isMuted })
         .from(roomParticipant)
         .where(
           and(
@@ -287,21 +288,7 @@ const app = new Hono<{ Bindings: ENV }>()
         )
         .limit(1);
       role = (participant[0]?.role as "host" | "viewer" | undefined) ?? null;
-    }
-
-    let isMuted = false;
-    if (roomId && role) {
-      const participantRow = await db
-        .select({ isMuted: roomParticipant.isMuted })
-        .from(roomParticipant)
-        .where(
-          and(
-            eq(roomParticipant.roomId, roomId),
-            eq(roomParticipant.userId, rows[0].userId)
-          )
-        )
-        .limit(1);
-      isMuted = participantRow[0]?.isMuted ?? false;
+      isMuted = participant[0]?.isMuted ?? false;
     }
 
     return c.json({ ...rows[0], role, isMuted });
