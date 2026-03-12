@@ -282,7 +282,6 @@ export default class Server implements Party.Server {
       userName: userInfo?.userName || `User ${conn.id.slice(0, 4)}`,
       role: userInfo?.role || "viewer",
       isMuted: userInfo?.isMuted ?? false,
-      _joinSent: false,
     });
 
     // Cancel grace period timer if the user is reconnecting before it expired
@@ -311,10 +310,6 @@ export default class Server implements Party.Server {
       if (!wasInGracePeriod) {
         await this.sendPresenceEvent(token, "connect");
       }
-      conn.setState({
-        ...(conn.state as object),
-        _joinSent: true,
-      });
     }
 
     console.log(`New connection to room ${this.room.id}`);
@@ -355,32 +350,25 @@ export default class Server implements Party.Server {
       await this.updateRoomLifecycle();
     }
 
-    // Schedule a background re-resolve when:
-    //  - userInfo is null entirely (fetch failed — cold-start / transient error)
-    //  - userInfo.userId is missing (session not found in DB)
-    //  - userInfo.role is null (race condition: participant row not yet committed when we queried)
-    const needsRetry = !userInfo || !userInfo.userId || !userInfo.role;
-    // Use a shorter delay when we already have partial info (role is the only thing missing)
-    const retryDelayMs = userInfo?.userId ? 800 : 3000;
-    if (needsRetry) {
+    // If resolveUser failed (cold-start / transient error), schedule a background
+    // re-resolve so the connection gets its real role and userId without needing
+    // the user to reconnect.
+    if (!userInfo) {
       setTimeout(async () => {
         const isStillConnected = Array.from(this.room.getConnections()).some(c => c.id === conn.id);
         if (!isStillConnected) return;
         const retryInfo = await this.resolveUserNameFromSessionToken(token);
         if (!retryInfo) return;
-        const prevState = (conn.state as { _joinSent?: boolean } | null) ?? {};
         conn.setState({
           token,
           userId: retryInfo.userId,
           userName: retryInfo.userName || `User ${conn.id.slice(0, 4)}`,
           role: retryInfo.role || "viewer",
           isMuted: retryInfo.isMuted ?? false,
-          _joinSent: prevState._joinSent ?? false,
         });
         this.broadcastUserCount();
 
-        // Send join notification only if it wasn't already sent during onConnect
-        if (retryInfo.userId && !prevState._joinSent) {
+        if (retryInfo.userId) {
           const sameUserConnections = this.getConnectionsWithState().filter(
             ({ state }) => state?.userId && state?.userId === retryInfo.userId
           );
@@ -394,14 +382,13 @@ export default class Server implements Party.Server {
               if (connection.id !== conn.id) connection.send(joinMsg);
             }
             await this.sendPresenceEvent(token, "connect");
-            conn.setState({ ...(conn.state as object), _joinSent: true });
           }
         }
 
         if (retryInfo.role === "host") {
           await this.updateRoomLifecycle();
         }
-      }, retryDelayMs);
+      }, 3000);
     }
   }
 
@@ -532,13 +519,13 @@ export default class Server implements Party.Server {
           }));
         }
       } else if (data.type === "cursor_move" || data.type === "cursor_hide") {
-        const senderState = sender.state as { role?: string; token?: string } | null;
+        const senderState = sender.state as { role?: string } | null;
         if (senderState?.role !== "host") return;
         this.room.broadcast(JSON.stringify(data), [sender.id]);
       } else if (data.type === "mute_user") {
         const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
         if (senderState?.role !== "host") {
-          sender.send(JSON.stringify({ type: "error", errorCode: "unauthorized_role", message: "Only the host can mute users." }));
+          sender.send(JSON.stringify({ type: "error", message: "Only the host can mute users." }));
           return;
         }
         const targetUserId = data.userId as string | undefined;
@@ -563,25 +550,6 @@ export default class Server implements Party.Server {
           userId: targetUserId,
           isMuted: newMuteState,
         }));
-      } else if (data.type === "verify_role") {
-        // Client requests an immediate role re-resolution (e.g. host just enabled laser pointer
-        // but their role may still be "viewer" because background resolve hasn't fired yet).
-        const senderState = sender.state as { token?: string; role?: string; userId?: string; userName?: string; isMuted?: boolean; _joinSent?: boolean } | null;
-        if (!senderState?.token) return;
-        const freshInfo = await this.resolveUserNameFromSessionToken(senderState.token);
-        if (!freshInfo) return;
-        const prevJoinSent = senderState._joinSent ?? false;
-        sender.setState({
-          token: senderState.token,
-          userId: freshInfo.userId,
-          userName: freshInfo.userName || senderState.userName || `User ${sender.id.slice(0, 4)}`,
-          role: freshInfo.role || senderState.role || "viewer",
-          isMuted: freshInfo.isMuted ?? senderState.isMuted ?? false,
-          _joinSent: prevJoinSent,
-        });
-        if (freshInfo.role === "host") {
-          await this.updateRoomLifecycle();
-        }
       }
     } catch (error) {
       console.error("Error processing message:", error);
