@@ -308,10 +308,12 @@ function RoomContent({
     const y = (clientY - rect.top) / rect.height
     if (x < 0 || x > 1 || y < 0 || y > 1) return
     wsRef.current.send(JSON.stringify({ type: 'cursor_move', x, y }))
+    setLaserCursor({ x, y })
   }, [])
 
   const sendCursorHide = useCallback(() => {
     wsRef.current?.send(JSON.stringify({ type: 'cursor_hide' }))
+    setLaserCursor(null)
   }, [])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -472,7 +474,7 @@ function RoomContent({
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
 
       {roomNotification && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-9999 bg-white dark:bg-gray-900 text-gray-800 dark:text-white text-sm px-4 py-2.5 rounded-xl pointer-events-none shadow-lg border border-gray-100 dark:border-gray-800 max-w-[280px] text-center whitespace-nowrap">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-white dark:bg-gray-900 text-gray-800 dark:text-white text-sm px-4 py-2.5 rounded-xl pointer-events-none shadow-lg border border-gray-100 dark:border-gray-800 max-w-[280px] text-center whitespace-nowrap">
           {roomNotification}
         </div>
       )}
@@ -613,7 +615,7 @@ function RoomContent({
                     alt={`Slide ${currentSlide + 1}`}
                     className="max-w-full max-h-full object-contain block"
                   />
-                  {laserCursor && roomRole === 'viewer' && (
+                  {laserCursor && (
                     <div
                       className="absolute pointer-events-none"
                       style={{

@@ -507,6 +507,7 @@ export default class Server implements Party.Server {
             id: `${sender.id}-${Date.now()}`,
             userId: state?.userId || sender.id,
             userName: userName,
+            role: (sender.state as { role?: string } | null)?.role ?? "viewer",
             message: cleanMessage,
             timestamp: Date.now()
           })
