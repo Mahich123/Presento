@@ -367,6 +367,24 @@ export default class Server implements Party.Server {
           isMuted: retryInfo.isMuted ?? false,
         });
         this.broadcastUserCount();
+
+        if (retryInfo.userId) {
+          const sameUserConnections = this.getConnectionsWithState().filter(
+            ({ state }) => state?.userId && state?.userId === retryInfo.userId
+          );
+          if (sameUserConnections.length === 1) {
+            const joinMsg = JSON.stringify({
+              type: "user_joined",
+              userId: retryInfo.userId,
+              userName: retryInfo.userName || `User ${conn.id.slice(0, 4)}`,
+            });
+            for (const connection of Array.from(this.room.getConnections())) {
+              if (connection.id !== conn.id) connection.send(joinMsg);
+            }
+            await this.sendPresenceEvent(token, "connect");
+          }
+        }
+
         if (retryInfo.role === "host") {
           await this.updateRoomLifecycle();
         }

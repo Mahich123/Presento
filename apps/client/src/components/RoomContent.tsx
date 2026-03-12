@@ -472,7 +472,7 @@ function RoomContent({
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
 
       {roomNotification && (
-        <div className="fixed bottom-6 left-6 z-[9999] bg-white dark:bg-black text-gray-800 dark:text-white text-sm px-4 py-2.5 rounded-xl pointer-events-none shadow-lg border border-gray-100 dark:border-gray-800">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-9999 bg-white dark:bg-gray-900 text-gray-800 dark:text-white text-sm px-4 py-2.5 rounded-xl pointer-events-none shadow-lg border border-gray-100 dark:border-gray-800 max-w-[280px] text-center whitespace-nowrap">
           {roomNotification}
         </div>
       )}
@@ -601,6 +601,7 @@ function RoomContent({
               {slideImage ? (
                 <div
                   className="relative max-w-full max-h-full"
+                  style={{ touchAction: roomRole === 'host' && laserEnabled ? 'none' : undefined }}
                   onMouseMove={handleMouseMove}
                   onMouseLeave={handleMouseLeave}
                   onTouchMove={handleTouchMove}
@@ -790,7 +791,7 @@ function RoomContent({
                       </span>
                       {roomRole === 'host' && msg.role !== 'host' && msg.userId !== currentUserId && (
                         <button
-                          className=" tooltip tooltip-bottom"
+                          className="p-1.5 -m-1.5 tooltip tooltip-bottom"
                           data-tip={mutedUsers.has(msg.userId) ? 'unmute user' : 'mute user'}
                           onClick={() => handleMuteUser(msg.userId)}
                         >
