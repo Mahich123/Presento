@@ -6,6 +6,6 @@
     "port": 1999
   },
   "vars": {
-    "BACKEND_BASE_URL": "https://presento-server.presento.workers.dev"
+    "BACKEND_BASE_URL": "https://presentoo.vercel.app"
   }
 }
