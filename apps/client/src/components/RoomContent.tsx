@@ -71,6 +71,7 @@ function WebSocketConnection({
   onCursorMove?: (pos: { x: number; y: number }) => void;
   onCursorHide?: () => void;
   onChatWarning: (message: string) => void;
+  onUnauthorizedRole?: () => void;
   wsRef: { current: PartySocket | null };
   onConnectionError?: (message: string) => void;
   onConnectionClose?: () => void;
@@ -127,6 +128,9 @@ function WebSocketConnection({
         onChatWarning(data.message)
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
+        if (data.errorCode === 'unauthorized_role') {
+          onUnauthorizedRole?.()
+        }
       }
     },
     onClose() {
@@ -340,6 +344,10 @@ function RoomContent({
 
   const toggleLaser = useCallback(() => {
     setLaserEnabled(prev => {
+      if (!prev) {
+        // Ask the server to re-verify our role in case it wasn't resolved yet
+        wsRef.current?.send(JSON.stringify({ type: 'verify_role' }))
+      }
       if (prev) sendCursorHide()
       return !prev
     })
@@ -525,6 +533,10 @@ function RoomContent({
             setChatWarning(msg)
             if (chatWarningTimerRef.current) clearTimeout(chatWarningTimerRef.current)
             chatWarningTimerRef.current = setTimeout(() => setChatWarning(null), 4000)
+          }}
+          onUnauthorizedRole={() => {
+            // Our role wasn't resolved yet on the server — request immediate re-verify
+            wsRef.current?.send(JSON.stringify({ type: 'verify_role' }))
           }}
           wsRef={wsRef}
           onConnectionError={(message) => {
@@ -791,7 +803,7 @@ function RoomContent({
                       <span className="text-xs text-gray-400">
                         {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      {roomRole === 'host' && msg.role !== 'host' && msg.userId !== currentUserId && (
+                      {roomRole === 'host' && msg.role !== 'host' && !!currentUserId && msg.userId !== currentUserId && (
                         <button
                           className="p-1.5 -m-1.5 tooltip tooltip-bottom"
                           data-tip={mutedUsers.has(msg.userId) ? 'unmute user' : 'mute user'}
