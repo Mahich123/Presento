@@ -12,11 +12,13 @@ function Signup() {
         return null
     }
 
+    const callbackURL = `${window.location.origin}/dashboard`
+
     const handleGithubAuth = async () => {
         try {
             const res = await authClient.signIn.social({
                 provider: 'github',
-                callbackURL: import.meta.env.VITE_CLIENT_URL + '/dashboard'
+                callbackURL
             })
             console.log('res', res)
         } catch (error) {
@@ -28,7 +30,7 @@ function Signup() {
         try {
             const res = await authClient.signIn.social({
                 provider: 'google',
-                callbackURL: import.meta.env.VITE_CLIENT_URL + '/dashboard'
+                callbackURL
             })
             console.log('res', res)
         } catch (error) {
