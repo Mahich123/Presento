@@ -354,6 +354,39 @@ const app = new Hono<{ Bindings: ENV }>()
 
     return c.json({ success: true, isMuted: newMuteState });
   })
+  .get("/party/:roomId/participants", async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
+    const roomId = c.req.param("roomId");
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    const hostCheck = await db
+      .select({ hostId: room.hostId })
+      .from(room)
+      .where(eq(room.id, roomId))
+      .limit(1);
+
+    if (!hostCheck.length || hostCheck[0].hostId !== session.user.id) {
+      return c.json({ error: "Only the host can view participants" }, 403);
+    }
+
+    const participants = await db
+      .select({
+        userId: roomParticipant.userId,
+        role: roomParticipant.role,
+        isMuted: roomParticipant.isMuted,
+        joinedAt: roomParticipant.joinedAt,
+        leftAt: roomParticipant.leftAt,
+      })
+      .from(roomParticipant)
+      .where(eq(roomParticipant.roomId, roomId));
+
+    return c.json({ participants });
+  })
 
   .post("/room-slide", async (c) => {
     const auth = createAuth(c.env);

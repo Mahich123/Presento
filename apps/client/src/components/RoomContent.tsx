@@ -1,7 +1,7 @@
 import usePartySocket from "partysocket/react";
 import { useEffect, useState, useRef, useCallback } from "react";
 import type PartySocket from "partysocket";
-import { client } from "../utils/honoClient";
+import { BASE_URL, client } from "../utils/honoClient";
 import { Ban } from "lucide-react";
 import userAuth from "../utils/userSession";
 
@@ -439,6 +439,31 @@ function RoomContent({
     }
   }, [])
 
+  useEffect(() => {
+    if (!roomId || !sessionToken || useMockApi) return
+    const controller = new AbortController()
+    fetch(`${BASE_URL}/api/party/session-user?roomId=${encodeURIComponent(roomId)}`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+      signal: controller.signal
+    })
+      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          console.warn('Session role check failed:', data)
+          return
+        }
+        if (data?.role && data.role !== roomRole) {
+          console.warn('Role mismatch between client and backend:', { client: roomRole, backend: data.role })
+        }
+      })
+      .catch((err) => {
+        if (err?.name !== 'AbortError') {
+          console.warn('Session role check error:', err)
+        }
+      })
+    return () => controller.abort()
+  }, [roomId, sessionToken, roomRole])
+
 
   useEffect(() => {
     if (!slideContent.length || !activePresentationId) return
@@ -463,7 +488,6 @@ function RoomContent({
     }
   }, [currentSlide, slideContent, activePresentationId, roomRole, cachedPageIds])
 
-  console.log('socketConnected', socketConnected)
 
   useEffect(() => {
     if (useMockApi || !roomId || !sessionToken) return
@@ -477,6 +501,8 @@ function RoomContent({
     }, 8000)
     return () => clearTimeout(timer)
   }, [roomId, sessionToken, socketRetryKey])
+
+  console.log('sessionToken', sessionToken)
 
   return (
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">

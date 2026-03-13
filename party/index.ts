@@ -537,14 +537,31 @@ export default class Server implements Party.Server {
         this.room.broadcast(JSON.stringify(data), [sender.id]);
       } else if (data.type === "mute_user") {
         const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
-        if (senderState?.role !== "host") {
-          sender.send(JSON.stringify({ type: "error", errorCode: "unauthorized_role", message: "Only the host can mute users." }));
-          return;
+        let effectiveState = senderState;
+        if (effectiveState?.role !== "host") {
+          // Role can be temporarily unresolved on cold starts; re-verify once before rejecting.
+          if (effectiveState?.token) {
+            const freshInfo = await this.resolveUserNameFromSessionToken(effectiveState.token);
+            if (freshInfo) {
+              sender.setState({
+                token: effectiveState.token,
+                userId: freshInfo.userId,
+                userName: freshInfo.userName || `User ${sender.id.slice(0, 4)}`,
+                role: freshInfo.role || effectiveState.role || "viewer",
+                isMuted: freshInfo.isMuted ?? false,
+              });
+            }
+          }
+          effectiveState = sender.state as { role?: string; token?: string } | null;
+          if (effectiveState?.role !== "host") {
+            sender.send(JSON.stringify({ type: "error", errorCode: "unauthorized_role", message: "Only the host can mute users." }));
+            return;
+          }
         }
         const targetUserId = data.userId as string | undefined;
-        if (!targetUserId || !senderState?.token) return;
+        if (!targetUserId || !effectiveState?.token) return;
 
-        const newMuteState = await this.toggleMuteInBackend(senderState.token, targetUserId);
+        const newMuteState = await this.toggleMuteInBackend(effectiveState.token, targetUserId);
         if (newMuteState === null) {
           sender.send(JSON.stringify({ type: "error", message: "Failed to update mute state." }));
           return;
