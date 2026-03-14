@@ -19,9 +19,9 @@ export default defineConfig(({ mode }) => {
         registerType: "autoUpdate",
         includeAssets: ["favicon.ico", "apple-touch-icon.png", "robots.txt"],
         manifest: {
-          name: "My React PWA",
-          short_name: "ReactPWA",
-          description: "My awesome PWA built with React + Vite",
+          name: "Presento - A modern presentation tool",
+          short_name: "Presento",
+          description: "A modern presentation tool built with React and Vite",
           theme_color: "#ffffff",
           background_color: "#ffffff",
           display: "standalone",
