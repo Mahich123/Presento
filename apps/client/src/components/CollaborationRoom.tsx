@@ -35,7 +35,6 @@ export default function CollaborationRoom() {
         if (role === 'host' || role === 'viewer') return role
         return fallback
     }
-    console.log('selectedFiles', selectedFiles)
 
     const handleConnect = async () => {
         return await authClient.signIn.social({
@@ -307,7 +306,6 @@ export default function CollaborationRoom() {
 
             .setCallback((data: any) => {
                 if (data.action === google.picker.Action.PICKED) {
-                    console.log('Picked files:', data.docs);
                     setSelectedFiles(data.docs);
                 }
             })

@@ -84,14 +84,11 @@ function WebSocketConnection({
     query: { token: sessionToken },
 
     onOpen() {
-      console.log('WebSocket connected')
       onConnected(true)
     },
     onMessage(e) {
       const data = JSON.parse(e.data);
-      console.log('WebSocket message received:', data.type, data)
       if (data.type === 'slide_content') {
-        console.log('Received slide_content with', data.slides?.length, 'slides')
         onSlideContent(data.slides, data.presentationId);
       } else if (data.type === 'slide_change') {
         onSlideChange(data.slideIndex);
@@ -235,7 +232,6 @@ function RoomContent({
   }, [])
 
   const handleChatMessage = useCallback((msg: ChatMessage) => {
-    console.log('msg', msg)
     setChatMessages(prev => [...prev, msg])
     if (!chatOpenRef.current) setUnreadCount(prev => prev + 1)
   }, [])
@@ -409,7 +405,6 @@ function RoomContent({
   // Send load_slide message when presentationId becomes available
   useEffect(() => {
     if (socketConnected && presentationId && token && wsRef.current && !useMockApi) {
-      console.log('Sending load_slide message with presentationId:', presentationId)
       wsRef.current.send(JSON.stringify({
         type: 'load_slide',
         presentationId: presentationId,
@@ -501,8 +496,6 @@ function RoomContent({
     }, 8000)
     return () => clearTimeout(timer)
   }, [roomId, sessionToken, socketRetryKey])
-
-  console.log('sessionToken', sessionToken)
 
   return (
     <div className="flex flex-col lg:flex-row h-[100dvh] lg:h-[calc(100vh-80px)] w-full gap-2 lg:gap-4 p-0 lg:p-4">
@@ -630,7 +623,7 @@ function RoomContent({
               <div className="absolute top-3 left-3 z-10 rounded-md bg-black/65 px-2.5 py-1 text-xs sm:text-sm text-white">
                 Room ID: <span className="font-semibold tracking-wide">{roomId}</span>
               </div>
-              <div className="absolute top-3 right-3 z-10 hidden lg:block">
+              <div className="absolute top-3 right-3 z-30 hidden lg:block">
                 <button
                   className="btn btn-sm btn-error text-white"
                   onClick={handleLeaveRoom}

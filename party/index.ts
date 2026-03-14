@@ -49,8 +49,6 @@ export default class Server implements Party.Server {
         });
       });
 
-      console.log('slidesData', slidesData)
-
       return slidesData;
     } catch (error) {
       console.error("Error fetching slide content:", error);
@@ -317,7 +315,6 @@ export default class Server implements Party.Server {
       });
     }
 
-    console.log(`New connection to room ${this.room.id}`);
     conn.send(JSON.stringify({ type: "connected", message: `Welcome ${conn.id}` }));
 
     if (this.slides.length > 0) {
@@ -406,7 +403,6 @@ export default class Server implements Party.Server {
   }
 
   async onClose(conn: Party.Connection) {
-    console.log(`Connection ${conn.id} closed`);
     const state = (conn.state as { userId?: string; token?: string; userName?: string; role?: string } | null) ?? null;
     const sameUserStillConnected = this.getConnectionsWithState().some(
       ({ conn: connectedConn, state: connectedState }) =>
@@ -441,25 +437,22 @@ export default class Server implements Party.Server {
       // For host: delay lifecycle update by the same grace period so a quick
       // reconnect doesn't immediately broadcast host_left to viewers.
       if (role === "host") {
+        // Start host timer immediately; a quick reconnect will clear it via updateRoomLifecycle.
+        await this.updateRoomLifecycle();
         this.broadcastUserCount();
         return;
       }
     }
 
     this.broadcastUserCount();
-    // Only update lifecycle if we know who disconnected. Connections whose userId
-    // couldn't be resolved (backend cold-start) must not trigger the host_left
-    // timer — we can't know their true role from the fallback "viewer" state.
     if (state?.userId) {
       await this.updateRoomLifecycle();
     }
   }
 
   async onMessage(message: string, sender: Party.Connection) {
-    console.log(`connection ${sender.id} sent message ${message}`);
     try {
       const data = JSON.parse(message);
-      console.log('data', data.type)
 
       if (data.type === "load_slide") {
         if (!data.presentationId) return;
@@ -539,7 +532,6 @@ export default class Server implements Party.Server {
         const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
         let effectiveState = senderState;
         if (effectiveState?.role !== "host") {
-          // Role can be temporarily unresolved on cold starts; re-verify once before rejecting.
           if (effectiveState?.token) {
             const freshInfo = await this.resolveUserNameFromSessionToken(effectiveState.token);
             if (freshInfo) {

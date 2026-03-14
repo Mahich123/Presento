@@ -20,7 +20,6 @@ function Signup() {
                 provider: 'github',
                 callbackURL
             })
-            console.log('res', res)
         } catch (error) {
             console.error('Github Sign in error:', error);
         }
@@ -32,7 +31,6 @@ function Signup() {
                 provider: 'google',
                 callbackURL
             })
-            console.log('res', res)
         } catch (error) {
             console.error('Google Sign in error:', error);
         }

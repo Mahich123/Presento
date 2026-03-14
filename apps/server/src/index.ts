@@ -359,8 +359,26 @@ const app = new Hono<{ Bindings: ENV }>()
     const db = createDb(c.env);
     const roomId = c.req.param("roomId");
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : null;
 
-    if (!session) {
+    // Support both cookie auth (browser) and bearer token auth (party/ws clients).
+    let requestingUserId = session?.user.id;
+
+    if (!requestingUserId && token) {
+      const sessionRows = await db
+        .select({ userId: user.id })
+        .from(authSession)
+        .innerJoin(user, eq(authSession.userId, user.id))
+        .where(eq(authSession.token, token))
+        .limit(1);
+
+      requestingUserId = sessionRows[0]?.userId;
+    }
+
+    if (!requestingUserId) {
       return c.json({ error: "Not authenticated" }, 401);
     }
 
@@ -370,7 +388,7 @@ const app = new Hono<{ Bindings: ENV }>()
       .where(eq(room.id, roomId))
       .limit(1);
 
-    if (!hostCheck.length || hostCheck[0].hostId !== session.user.id) {
+    if (!hostCheck.length || hostCheck[0].hostId !== requestingUserId) {
       return c.json({ error: "Only the host can view participants" }, 403);
     }
 
@@ -650,7 +668,6 @@ const app = new Hono<{ Bindings: ENV }>()
       console.error("Slides API error:", errorText);
       
       if (res.status === 403) {
-        console.log("Attempting fallback to Drive API export...");
         
         // Get page index from slides data
         const presentationRes = await fetch(
