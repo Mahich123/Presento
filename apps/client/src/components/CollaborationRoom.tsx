@@ -25,6 +25,10 @@ export default function CollaborationRoom() {
     const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false)
     const [roomRole, setRoomRole] = useState<'host' | 'viewer' | ''>('')
     const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null)
+    const storedRoomIdKey = 'roomId'
+    const storedSelectedFilesKey = 'selectedFiles'
+    const storedSelectedFilesRoomKey = 'selectedFilesRoomId'
+    const suppressRejoinPromptKey = 'suppressRejoinPrompt'
 
     const showToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
         setToast({ message, type })
@@ -37,6 +41,7 @@ export default function CollaborationRoom() {
     }
 
     const handleConnect = async () => {
+        sessionStorage.setItem(suppressRejoinPromptKey, '1')
         return await authClient.signIn.social({
             provider: 'google',
             callbackURL: `${window.location.origin}/dashboard`
@@ -64,7 +69,8 @@ export default function CollaborationRoom() {
                 const res = await response.json()
                 setRespData(JSON.stringify(res))
                 setRoomId(newRoomId)
-                localStorage.setItem('roomId', newRoomId)
+                setSelectedFiles([])
+                localStorage.setItem(storedRoomIdKey, newRoomId)
                 setRoomRole(normalizeRole(res.role, 'host'))
                 setShowModal(true)
                 navigate({ to: '/dashboard', search: { roomId: newRoomId } })
@@ -104,8 +110,9 @@ export default function CollaborationRoom() {
             if (response.ok) {
                 const res = await response.json()
                 setRoomId(trimmedRoomId)
+                setSelectedFiles([])
                 setRoomRole(normalizeRole(res.role, 'viewer'))
-                localStorage.setItem('roomId', trimmedRoomId)
+                localStorage.setItem(storedRoomIdKey, trimmedRoomId)
                 navigate({ to: '/dashboard', search: { roomId: trimmedRoomId } })
                 return true
             } else {
@@ -186,18 +193,52 @@ export default function CollaborationRoom() {
     }, [session?.user?.id])
 
     useEffect(() => {
+        if (!roomId) return
+        const storedRoomForFiles = localStorage.getItem(storedSelectedFilesRoomKey)
+        const storedSelected = localStorage.getItem(storedSelectedFilesKey)
+        if (storedRoomForFiles !== roomId || !storedSelected) {
+            setSelectedFiles([])
+            localStorage.removeItem(storedSelectedFilesKey)
+            localStorage.removeItem(storedSelectedFilesRoomKey)
+            return
+        }
+        try {
+            const parsed = JSON.parse(storedSelected)
+            if (Array.isArray(parsed)) {
+                setSelectedFiles(parsed)
+            }
+        } catch {
+            setSelectedFiles([])
+            localStorage.removeItem(storedSelectedFilesKey)
+            localStorage.removeItem(storedSelectedFilesRoomKey)
+        }
+    }, [roomId])
+
+    useEffect(() => {
         const token = session?.session.token
         if (!token || roomId || pendingRejoinRoomId) return
 
         const queryRoomId = new URLSearchParams(window.location.search).get('roomId')?.trim() ?? ''
-        const storedRoomId = localStorage.getItem('roomId')?.trim() ?? ''
+        const storedRoomId = localStorage.getItem(storedRoomIdKey)?.trim() ?? ''
         const targetRoomId = queryRoomId || storedRoomId
 
         if (!targetRoomId) return
 
-        setRoomJoinId(targetRoomId)
+        const suppressRejoinPrompt = sessionStorage.getItem(suppressRejoinPromptKey) === '1'
+        if (suppressRejoinPrompt) {
+            sessionStorage.removeItem(suppressRejoinPromptKey)
+            const attemptAutoRejoin = async () => {
+                const ok = await joinRoomById(targetRoomId)
+                if (!ok) {
+                    setPendingRejoinRoomId(targetRoomId)
+                }
+            }
+            void attemptAutoRejoin()
+            return
+        }
+
         setPendingRejoinRoomId(targetRoomId)
-    }, [session?.session.token, roomId, pendingRejoinRoomId])
+    }, [joinRoomById, session?.session.token, roomId, pendingRejoinRoomId])
 
     const handleRequestLeaveRoom = useCallback(() => {
         setShowLeaveConfirmModal(true)
@@ -210,7 +251,9 @@ export default function CollaborationRoom() {
         setRoomRole('')
         setSelectedFiles([])
         setPendingRejoinRoomId('')
-        localStorage.removeItem('roomId')
+        localStorage.removeItem(storedRoomIdKey)
+        localStorage.removeItem(storedSelectedFilesKey)
+        localStorage.removeItem(storedSelectedFilesRoomKey)
         navigate({ to: '/dashboard', search: {} })
         showToast('You left the room.', 'info')
         void leaveRoomById(leavingRoomId)
@@ -219,7 +262,10 @@ export default function CollaborationRoom() {
     const handleCancelRejoin = useCallback(() => {
         const staleRoomId = pendingRejoinRoomId
         setPendingRejoinRoomId('')
-        localStorage.removeItem('roomId')
+        setRoomJoinId('')
+        localStorage.removeItem(storedRoomIdKey)
+        localStorage.removeItem(storedSelectedFilesKey)
+        localStorage.removeItem(storedSelectedFilesRoomKey)
         navigate({ to: '/dashboard', search: {} })
         void leaveRoomById(staleRoomId)
     }, [leaveRoomById, navigate, pendingRejoinRoomId])
@@ -230,7 +276,9 @@ export default function CollaborationRoom() {
         setRoomRole('')
         setSelectedFiles([])
         setPendingRejoinRoomId('')
-        localStorage.removeItem('roomId')
+        localStorage.removeItem(storedRoomIdKey)
+        localStorage.removeItem(storedSelectedFilesKey)
+        localStorage.removeItem(storedSelectedFilesRoomKey)
         navigate({ to: '/dashboard', search: {} })
         if (reason === 'host_timeout') {
             showToast('Room closed because host did not return in time.', 'info')
@@ -246,7 +294,9 @@ export default function CollaborationRoom() {
         if (ok) {
             setPendingRejoinRoomId('')
         } else {
-            localStorage.removeItem('roomId')
+            localStorage.removeItem(storedRoomIdKey)
+            localStorage.removeItem(storedSelectedFilesKey)
+            localStorage.removeItem(storedSelectedFilesRoomKey)
         }
         setIsJoiningFromPrompt(false)
     }, [joinRoomById, pendingRejoinRoomId])
@@ -307,6 +357,8 @@ export default function CollaborationRoom() {
             .setCallback((data: any) => {
                 if (data.action === google.picker.Action.PICKED) {
                     setSelectedFiles(data.docs);
+                    localStorage.setItem(storedSelectedFilesKey, JSON.stringify(data.docs))
+                    localStorage.setItem(storedSelectedFilesRoomKey, roomId)
                 }
             })
 
@@ -454,6 +506,15 @@ export default function CollaborationRoom() {
                                         placeholder="Enter room ID"
                                         value={roomJoinId}
                                         onChange={(e) => setRoomJoinId(e.target.value)}
+                                        onFocus={() => {
+                                            if (pendingRejoinRoomId) {
+                                                setRoomJoinId('')
+                                                setPendingRejoinRoomId('')
+                                                localStorage.removeItem(storedRoomIdKey)
+                                                localStorage.removeItem(storedSelectedFilesKey)
+                                                localStorage.removeItem(storedSelectedFilesRoomKey)
+                                            }
+                                        }}
                                         onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
                                         className="input input-bordered w-full rounded-xl text-sm outline-none"
                                     />
