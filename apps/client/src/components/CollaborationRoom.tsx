@@ -377,7 +377,7 @@ export default function CollaborationRoom() {
 
 
     return (
-        <div className={`flex flex-col h-full bg-gray-50 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
+        <div className={`flex flex-col h-full bg-base-200 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
                 <RoomContent
@@ -394,8 +394,8 @@ export default function CollaborationRoom() {
             ) :
                 <div className="w-full px-4 flex flex-col items-center py-8 sm:py-0">
                     <div className="text-center mb-8 sm:mb-10">
-                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">What's you wanna do today?</h1>
-                        <p className="text-gray-500 text-sm max-w-md">
+                        <h1 className="text-2xl sm:text-3xl font-bold mb-2">What's you wanna do today?</h1>
+                        <p className="text-base-content/70 text-sm max-w-md">
                             Ready to lead? Open a new room to present your ideas or join a session to contribute and make your mark.
                         </p>
                     </div>
@@ -410,23 +410,23 @@ export default function CollaborationRoom() {
                                     : 'w-full sm:w-72 max-h-128 opacity-100'
                             }`}>
                             <div
-                                className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'create'
-                                        ? 'border-blue-200 shadow-xl ring-2 ring-blue-100'
-                                        : 'border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 cursor-pointer'
+                                className={`w-full bg-base-100 rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'create'
+                                        ? 'border-primary/30 shadow-xl ring-2 ring-primary/20'
+                                        : 'border-base-300 shadow-sm hover:shadow-md hover:border-primary/30 cursor-pointer'
                                     }`}
                                 onClick={() => selectedCard === null && setSelectedCard('create')}
                             >
-                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'create' ? 'bg-blue-100' : 'bg-blue-50'}`}>
-                                    <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'create' ? 'bg-primary/20' : 'bg-primary/10'}`}>
+                                    <svg className="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                     </svg>
                                 </div>
-                                <h2 className="text-base sm:text-lg font-bold text-gray-800 mb-2">Create Room</h2>
+                                <h2 className="text-base sm:text-lg font-bold mb-2">Create Room</h2>
                                 <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'create'
                                         ? 'max-h-24 opacity-100 mt-1 delay-200'
                                         : 'max-h-0 opacity-0'
                                     }`}>
-                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                    <p className="text-base-content/60 text-sm leading-relaxed">
                                         Start a new session. A unique room ID will be generated, share it with others so they can join.
                                     </p>
                                 </div>
@@ -449,7 +449,7 @@ export default function CollaborationRoom() {
                                     </button>
                                     <button
                                         onClick={() => setSelectedCard(null)}
-                                        className="w-full btn btn-ghost btn-sm text-gray-400 rounded-xl"
+                                        className="w-full btn btn-ghost btn-sm rounded-xl"
                                     >
                                         ← Back
                                     </button>
@@ -461,9 +461,9 @@ export default function CollaborationRoom() {
                         <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard !== null ? 'max-h-0 sm:w-0 opacity-0' : 'max-h-16 sm:max-h-none w-full sm:w-14 opacity-100'
                             }`}>
                             <div className="w-full sm:w-14 flex flex-row sm:flex-col items-center justify-center gap-2 py-1 sm:py-10">
-                                <div className="h-px w-full sm:w-px sm:h-10 bg-gray-200"></div>
-                                <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2 py-1 rounded-full">OR</span>
-                                <div className="h-px w-full sm:w-px sm:h-10 bg-gray-200"></div>
+                                <div className="h-px w-full sm:w-px sm:h-10 bg-base-300"></div>
+                                <span className="text-xs font-medium bg-base-200 px-2 py-1 rounded-full">OR</span>
+                                <div className="h-px w-full sm:w-px sm:h-10 bg-base-300"></div>
                             </div>
                         </div>
 
@@ -475,23 +475,23 @@ export default function CollaborationRoom() {
                                     : 'w-full sm:w-72 max-h-136 opacity-100'
                             }`}>
                             <div
-                                className={`w-full bg-white rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'join'
-                                        ? 'border-green-200 shadow-xl ring-2 ring-green-100'
-                                        : 'border-gray-100 shadow-sm hover:shadow-md hover:border-green-200 cursor-pointer'
+                                className={`w-full bg-base-100 rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'join'
+                                        ? 'border-success/30 shadow-xl ring-2 ring-success/20'
+                                        : 'border-base-300 shadow-sm hover:shadow-md hover:border-success/30 cursor-pointer'
                                     }`}
                                 onClick={() => selectedCard === null && setSelectedCard('join')}
                             >
-                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'join' ? 'bg-green-100' : 'bg-green-50'}`}>
-                                    <svg className="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'join' ? 'bg-success/20' : 'bg-success/10'}`}>
+                                    <svg className="w-7 h-7 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
                                     </svg>
                                 </div>
-                                <h2 className="text-base sm:text-lg font-bold text-gray-800 mb-2">Join Room</h2>
+                                <h2 className="text-base sm:text-lg font-bold mb-2">Join Room</h2>
                                 <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'join'
                                         ? 'max-h-24 opacity-100 mt-1 delay-200'
                                         : 'max-h-0 opacity-0'
                                     }`}>
-                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                    <p className="text-base-content/60 text-sm leading-relaxed">
                                         Have a room ID? Enter it below to jump into an ongoing session as a viewer.
                                     </p>
                                 </div>
@@ -521,13 +521,13 @@ export default function CollaborationRoom() {
                                     <button
                                         onClick={handleJoinRoom}
                                         disabled={!roomJoinId.trim()}
-                                        className="w-full btn btn-success text-black rounded-xl disabled:opacity-50"
+                                        className="w-full btn btn-success rounded-xl disabled:opacity-50"
                                     >
                                         Join Room
                                     </button>
                                     <button
                                         onClick={() => setSelectedCard(null)}
-                                        className="w-full btn btn-ghost btn-sm text-gray-400 rounded-xl"
+                                        className="w-full btn btn-ghost btn-sm rounded-xl"
                                     >
                                         ← Back
                                     </button>
@@ -540,38 +540,38 @@ export default function CollaborationRoom() {
             }
 
             <dialog className={`modal ${showModal ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-sm sm:max-w-xl md:max-w-2xl mx-4">
+                <div className="modal-box w-full max-w-sm sm:max-w-xl md:max-w-2xl mx-4 bg-base-100">
                     <h3 className="font-bold text-base sm:text-lg mb-4">Room Created Successfully! 🎉</h3>
 
                     <div className="space-y-4 mb-6">
-                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="px-2 py-1 rounded break-all bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{roomId}</code></p>
-                        <p className="text-xs sm:text-sm text-gray-600">Share this Room ID with your collaborators to join the session.</p>
+                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="px-2 py-1 rounded break-all bg-base-200">{roomId}</code></p>
+                        <p className="text-xs sm:text-sm text-base-content/60">Share this Room ID with your collaborators to join the session.</p>
                     </div>
 
                     <div className="divider">Add Files to Collaborate</div>
 
                     {(!hasGoogle || !accessToken) ? (
                         <div className="text-center py-4">
-                            <p className="text-gray-600 mb-4 text-sm sm:text-base">
+                            <p className="text-base-content/70 mb-4 text-sm sm:text-base">
                                 Connect your Google account to access Drive files for collaboration
                             </p>
                             <button
                                 onClick={handleConnect}
-                                className="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm sm:text-base px-6 sm:px-8 py-2.5 sm:py-3 rounded-full transition-colors duration-200 cursor-pointer w-full sm:w-auto"
+                                className="btn btn-primary w-full sm:w-auto"
                             >
                                 Connect Google Drive
                             </button>
                         </div>
                     ) : (
                         <div className="text-center py-4">
-                            <div className="bg-green-100 text-green-800 p-3 rounded mb-4 inline-block text-sm sm:text-base">
+                            <div className="bg-success/20 text-success-content p-3 rounded mb-4 inline-block text-sm sm:text-base">
                                 ✅ Google Drive Connected
                             </div>
                             <br />
                             <button
                                 onClick={openPicker}
                                 disabled={!pickerApiLoaded}
-                                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium text-sm sm:text-base px-6 sm:px-8 py-2.5 sm:py-3 rounded-full transition-colors duration-200 cursor-pointer disabled:cursor-not-allowed w-full sm:w-auto"
+                                className="btn btn-primary w-full sm:w-auto"
                             >
                                 {pickerApiLoaded ? '📁 Choose from Drive' : '⏳ Loading...'}
                             </button>
@@ -594,10 +594,10 @@ export default function CollaborationRoom() {
             </dialog>
 
             <dialog className={`modal ${pendingRejoinRoomId ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-md mx-4">
+                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
                     <h3 className="font-bold text-lg">Rejoin room?</h3>
-                    <p className="py-3 text-sm text-gray-600">
-                        Room <code className="px-2 py-1 rounded bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{pendingRejoinRoomId}</code> is still in your session.
+                    <p className="py-3 text-sm text-base-content/70">
+                        Room <code className="px-2 py-1 rounded bg-base-200">{pendingRejoinRoomId}</code> is still in your session.
                         Do you want to rejoin this room?
                     </p>
                     <div className="modal-action">
@@ -624,9 +624,9 @@ export default function CollaborationRoom() {
             </dialog>
 
             <dialog className={`modal ${showLeaveConfirmModal ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-md mx-4">
+                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
                     <h3 className="font-bold text-lg">Leave room?</h3>
-                    <p className="py-3 text-sm text-gray-600">
+                    <p className="py-3 text-sm text-base-content/70">
                         Are you sure you want to leave this room?
                     </p>
                     <div className="modal-action">
@@ -637,7 +637,7 @@ export default function CollaborationRoom() {
                             Cancel
                         </button>
                         <button
-                            className="btn btn-error text-white"
+                            className="btn btn-error"
                             onClick={handleConfirmLeaveRoom}
                         >
                             Leave

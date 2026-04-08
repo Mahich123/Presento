@@ -3,6 +3,7 @@ import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
 import GoogleIcon from "../icons/GoogleIcon"
 import GithubIcon from "../icons/GithubIcon"
+import ThemeToggle from "./ThemeToggle"
 
 export default function Header() {
 
@@ -41,11 +42,12 @@ export default function Header() {
 
 
     return (
-        <div className="sticky top-0 z-20 navbar bg-base-100 shadow-sm px-4 sm:px-8 lg:px-16">
+        <div className="sticky top-0 z-20 navbar bg-base-100 shadow-sm px-4 sm:px-8 lg:px-16 border-b border-base-200">
             <div className="flex-1">
                 <a className="text-xl font-extrabold">Presento</a>
             </div>
-            <div className="flex-none">
+            <div className="flex-none flex items-center gap-3">
+                <ThemeToggle />
                 {session ? (
                     <div className="dropdown dropdown-end">
                         <div tabIndex={0} role="button" className="btn btn-ghost btn-circle avatar">
@@ -56,7 +58,7 @@ export default function Header() {
                             </div>
                         </div>
                         <ul
-                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow">
+                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow border border-base-200">
                             <li>
                                 <a className="justify-between">
                                     Profile
@@ -66,7 +68,7 @@ export default function Header() {
                             <li>
                                 <a>
                                     Linked
-                                    {accounts.length === 0 && <span className="text-xs text-gray-400">None</span>}
+                                    {accounts.length === 0 && <span className="text-xs">None</span>}
                                     <div className="flex items-center  justify-end gap-x-2 mt-1">
                                         {accounts.map((acc, idx) => (
                                             <span key={idx} className="inline-flex items-center ">
