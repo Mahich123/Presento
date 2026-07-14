@@ -7,6 +7,58 @@ import RoomContent from "./RoomContent"
 import Toast from "./Toast"
 import { useNavigate } from "@tanstack/react-router"
 
+const GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation'
+const PDF_MIME = 'application/pdf'
+const CONVERTIBLE_PRESENTATION_MIMES = [
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+    'application/vnd.ms-powerpoint', // .ppt
+]
+
+// File types RoomContent can display: native Slides (converted target), and PDF
+// (rendered client-side with pdf.js). Cached picks of other types are dropped.
+const DISPLAYABLE_MIMES = [GOOGLE_SLIDES_MIME, PDF_MIME]
+
+// The Google Slides API can only read native Google Slides files. An uploaded
+// PowerPoint has a Drive file id but a different mime type, so we copy it into a
+// native Slides file (Drive converts on copy) and load that instead. Returns the
+// presentation id to hand to load_slide.
+async function ensureGoogleSlidesId(
+    file: { id: string; name?: string; mimeType?: string },
+    token: string,
+): Promise<string> {
+    if (file.mimeType === GOOGLE_SLIDES_MIME) return file.id
+
+    if (file.mimeType && CONVERTIBLE_PRESENTATION_MIMES.includes(file.mimeType)) {
+        const res = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${file.id}/copy?fields=id`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: `${file.name ?? 'Presentation'} (Presento)`,
+                    mimeType: GOOGLE_SLIDES_MIME,
+                }),
+            },
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => null)
+            throw new Error(
+                err?.error?.message ||
+                    'Could not convert this PowerPoint to Google Slides. Reconnect Google and try again.',
+            )
+        }
+        const created = (await res.json()) as { id: string }
+        return created.id
+    }
+
+    throw new Error(
+        'This file type is not supported. Please pick a Google Slides or PowerPoint (.pptx) file.',
+    )
+}
+
 export default function CollaborationRoom() {
     const navigate = useNavigate()
     const [hasGoogle, setHasGoogle] = useState(false)
@@ -205,7 +257,17 @@ export default function CollaborationRoom() {
         try {
             const parsed = JSON.parse(storedSelected)
             if (Array.isArray(parsed)) {
-                setSelectedFiles(parsed)
+                // Only restore native Google Slides files. Older cached picks (e.g. a
+                // raw .pptx from before auto-conversion) would fail load_slide on every
+                // reload, so drop them and force a fresh pick that runs conversion.
+                const usable = parsed.filter((f) => f && DISPLAYABLE_MIMES.includes(f.mimeType))
+                if (usable.length) {
+                    setSelectedFiles(usable)
+                } else {
+                    setSelectedFiles([])
+                    localStorage.removeItem(storedSelectedFilesKey)
+                    localStorage.removeItem(storedSelectedFilesRoomKey)
+                }
             }
         } catch {
             setSelectedFiles([])
@@ -322,8 +384,10 @@ export default function CollaborationRoom() {
 
 
         if (!getToken.ok) {
+            // A transient refresh failure shouldn't drop the connected state and force
+            // a full reconnect (which loses the room). Let the user simply retry.
             console.error('Failed to get fresh token from server');
-            setHasGoogle(false)
+            showToast("Couldn't refresh Google access. Please try again.", 'error')
             return;
         }
 
@@ -354,12 +418,36 @@ export default function CollaborationRoom() {
 
             .setDeveloperKey(import.meta.env.VITE_DEVELOPER_KEY)
 
-            .setCallback((data: any) => {
-                if (data.action === google.picker.Action.PICKED) {
-                    setSelectedFiles(data.docs);
-                    localStorage.setItem(storedSelectedFilesKey, JSON.stringify(data.docs))
-                    localStorage.setItem(storedSelectedFilesRoomKey, roomId)
+            .setCallback(async (data: any) => {
+                if (data.action !== google.picker.Action.PICKED) return
+
+                const docs = (data.docs ?? []) as { id: string; name?: string; mimeType?: string }[]
+                if (!docs.length) return
+
+                const first = docs[0]
+                let normalizedDocs = docs
+
+                // PDFs are rendered client-side with pdf.js — pass them straight through.
+                // Google Slides files load directly. Everything else (e.g. uploaded
+                // PowerPoint) is converted to Google Slides so the Slides API can render it.
+                if (first.mimeType !== GOOGLE_SLIDES_MIME && first.mimeType !== PDF_MIME) {
+                    showToast('Converting to Google Slides…', 'info')
+                    try {
+                        const presentationId = await ensureGoogleSlidesId(first, newAccessToken)
+                        normalizedDocs = [
+                            { ...first, id: presentationId, mimeType: GOOGLE_SLIDES_MIME },
+                            ...docs.slice(1),
+                        ]
+                        showToast('Converted — loading slides…', 'success')
+                    } catch (err) {
+                        showToast(err instanceof Error ? err.message : 'Conversion failed', 'error')
+                        return
+                    }
                 }
+
+                setSelectedFiles(normalizedDocs)
+                localStorage.setItem(storedSelectedFilesKey, JSON.stringify(normalizedDocs))
+                localStorage.setItem(storedSelectedFilesRoomKey, roomId)
             })
 
 
@@ -383,6 +471,7 @@ export default function CollaborationRoom() {
                 <RoomContent
                     roomId={roomId}
                     presentationId={selectedFiles[0]?.id}
+                    presentationMimeType={selectedFiles[0]?.mimeType}
                     token={accessToken}
                     sessionToken={session?.session.token ?? ''}
                     roomRole={roomRole}
@@ -564,7 +653,7 @@ export default function CollaborationRoom() {
                         </div>
                     ) : (
                         <div className="text-center py-4">
-                            <div className="bg-success/20 text-success-content p-3 rounded mb-4 inline-block text-sm sm:text-base">
+                            <div className="bg-success/20 text-success font-medium p-3 rounded mb-4 inline-block text-sm sm:text-base">
                                 ✅ Google Drive Connected
                             </div>
                             <br />

@@ -6,6 +6,7 @@ const filter = new Filter();
 export default class Server implements Party.Server {
   slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
   presentationId: string | null = null;
+  pdfFileId: string | null = null;
   currentSlideIndex: number = 0;
   hostLeftTimeout: ReturnType<typeof setTimeout> | null = null;
   hostLeftTickInterval: ReturnType<typeof setInterval> | null = null;
@@ -30,12 +31,13 @@ export default class Server implements Party.Server {
 
       if (!res.ok) {
         console.error("Google Slides API error:", data);
-        return [];
+        const reason = data?.error?.message || `Google Slides API error (${res.status})`;
+        return { slides: [], error: reason };
       }
 
       if (!data.slides || !Array.isArray(data.slides)) {
         console.error("Invalid response from Google Slides API:", data);
-        return [];
+        return { slides: [], error: "This file isn't a readable Google Slides presentation." };
       }
 
       data.slides.forEach((slide: any, i: number) => {
@@ -49,10 +51,10 @@ export default class Server implements Party.Server {
         });
       });
 
-      return slidesData;
+      return { slides: slidesData };
     } catch (error) {
       console.error("Error fetching slide content:", error);
-      return [];
+      return { slides: [], error: "Network error while fetching slides from Google." };
     }
 }
 
@@ -327,6 +329,15 @@ export default class Server implements Party.Server {
         type: "slide_change",
         slideIndex: this.currentSlideIndex
       }));
+    } else if (this.pdfFileId) {
+      conn.send(JSON.stringify({
+        type: "pdf_content",
+        fileId: this.pdfFileId
+      }));
+      conn.send(JSON.stringify({
+        type: "slide_change",
+        slideIndex: this.currentSlideIndex
+      }));
     }
 
     if (this.hostLeftEndsAt && !this.hasConnectedHost()) {
@@ -457,7 +468,7 @@ export default class Server implements Party.Server {
       if (data.type === "load_slide") {
         if (!data.presentationId) return;
 
-        const slideContent = await this.getSlideContent(
+        const { slides: slideContent, error: slideError } = await this.getSlideContent(
           data.presentationId,
           data.token
         );
@@ -466,7 +477,7 @@ export default class Server implements Party.Server {
           console.error("Failed to load slides - no content returned");
           sender.send(JSON.stringify({
             type: "error",
-            message: "Failed to load presentation slides"
+            message: slideError || "Failed to load presentation slides"
           }));
           return;
         }
@@ -474,6 +485,7 @@ export default class Server implements Party.Server {
         const isNewPresentation = this.presentationId !== data.presentationId;
         this.slides = slideContent;
         this.presentationId = data.presentationId;
+        this.pdfFileId = null;
         if (isNewPresentation) {
           this.currentSlideIndex = 0;
         }
@@ -483,6 +495,23 @@ export default class Server implements Party.Server {
             type: "slide_content",
             slides: slideContent,
             presentationId: data.presentationId
+          }),
+        );
+      } else if (data.type === "load_pdf") {
+        if (!data.fileId) return;
+
+        const isNewPdf = this.pdfFileId !== data.fileId;
+        this.pdfFileId = data.fileId;
+        this.slides = [];
+        this.presentationId = null;
+        if (isNewPdf) {
+          this.currentSlideIndex = 0;
+        }
+
+        this.room.broadcast(
+          JSON.stringify({
+            type: "pdf_content",
+            fileId: data.fileId
           }),
         );
       } else if (data.type === "slide_change") {

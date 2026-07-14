@@ -493,7 +493,14 @@ const app = new Hono<{ Bindings: ENV }>()
         refresh_token: refreshToken,
       });
 
-      const { token } = await oauth2Client.getAccessToken();
+      let token: string | null | undefined;
+      try {
+        ({ token } = await oauth2Client.getAccessToken());
+      } catch (err) {
+        // e.g. invalid_grant when the refresh token was revoked — needs reconnect.
+        console.error("Google token refresh failed:", err);
+        return c.json({ error: "Google session expired, please reconnect" }, 401);
+      }
 
       if (!token) {
         return c.json({ error: "Failed to refresh access token" }, 400);
@@ -503,7 +510,7 @@ const app = new Hono<{ Bindings: ENV }>()
         .update(account)
         .set({
           accessToken: token,
-          accessTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          accessTokenExpiresAt: new Date(Date.now() + 55 * 60 * 1000),
         })
         .where(
           and(
@@ -537,6 +544,100 @@ const app = new Hono<{ Bindings: ENV }>()
       .where(eq(account.userId, userId));
 
     return c.json(accountProviders);
+  })
+
+  .get("pdf/:fileId",
+    zValidator("query", z.object({ roomId: z.string().optional() })),
+    async (c) => {
+    const auth = createAuth(c.env);
+    const db = createDb(c.env);
+    const { fileId } = c.req.param();
+    const { roomId } = c.req.valid("query");
+
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    // Resolve the host so every participant fetches the PDF with the host's token.
+    let hostUserId = session.user.id;
+    if (roomId) {
+      const existingRoom = await db
+        .select()
+        .from(room)
+        .where(eq(room.id, roomId))
+        .limit(1);
+      if (existingRoom.length > 0) {
+        hostUserId = existingRoom[0].hostId;
+      }
+    }
+
+    const googleAccount = await db
+      .select()
+      .from(account)
+      .where(and(eq(account.userId, hostUserId), eq(account.providerId, "google")))
+      .limit(1);
+
+    if (googleAccount.length === 0 || !googleAccount[0].accessToken) {
+      return c.json({ error: "Host's Google account not connected" }, 400);
+    }
+
+    let accessToken = googleAccount[0].accessToken;
+    const refreshToken = googleAccount[0].refreshToken;
+    const tokenExpiry = googleAccount[0].accessTokenExpiresAt;
+    const tokenExpired = !tokenExpiry || Date.now() >= Number(tokenExpiry);
+
+    if (tokenExpired) {
+      if (!refreshToken) {
+        return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
+      }
+      const oauth2Client = new google.auth.OAuth2(
+        c.env.GOOGLE_CLIENT_ID,
+        c.env.GOOGLE_CLIENT_SECRET,
+        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
+      );
+      oauth2Client.setCredentials({ refresh_token: refreshToken });
+      const { token } = await oauth2Client.getAccessToken();
+      if (!token) {
+        return c.json({ error: "Failed to refresh access token" }, 400);
+      }
+      await db
+        .update(account)
+        .set({
+          accessToken: token,
+          accessTokenExpiresAt: new Date(Date.now() + 55 * 60 * 1000),
+        })
+        .where(and(eq(account.userId, hostUserId), eq(account.providerId, "google")));
+      accessToken = token;
+    }
+
+    try {
+      const driveRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+
+      if (!driveRes.ok) {
+        const errorText = await driveRes.text();
+        console.error("Drive PDF fetch error:", errorText);
+        return c.json({ error: "Failed to fetch PDF", details: errorText }, driveRes.status as 500);
+      }
+
+      const pdfBuffer = await driveRes.arrayBuffer();
+      // Credentialed fetch (pdf.js sends cookies) requires a specific origin, not "*".
+      const origin = c.req.header("Origin") ?? "*";
+      return new Response(pdfBuffer, {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Cache-Control": "private, max-age=3600",
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Credentials": "true",
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching PDF:", error);
+      return c.json({ error: "Internal server error", message: error instanceof Error ? error.message : String(error) }, 500);
+    }
   })
 
   .get("slideimage/:presentationId/:pageObjectId",
@@ -616,7 +717,7 @@ const app = new Hono<{ Bindings: ENV }>()
         .update(account)
         .set({
           accessToken: token,
-          accessTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          accessTokenExpiresAt: new Date(Date.now() + 55 * 60 * 1000),
         })
         .where(
           and(
