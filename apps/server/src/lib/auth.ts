@@ -27,8 +27,12 @@ export function createAuth(env: ENV) {
           "email",
           "profile",
           "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
           "https://www.googleapis.com/auth/presentations.readonly",
         ],
+        // offline + consent → Google returns a refresh token we can store, so
+        // expired access tokens can be renewed instead of forcing a reconnect.
+        accessType: "offline",
         prompt: "consent",
       },
     },

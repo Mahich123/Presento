@@ -1,13 +1,24 @@
 import usePartySocket from "partysocket/react";
 import { useEffect, useState, useRef, useCallback } from "react";
 import type PartySocket from "partysocket";
+import * as pdfjsLib from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { BASE_URL, client } from "../utils/honoClient";
 import { Ban } from "lucide-react";
 import userAuth from "../utils/userSession";
 
+// pdf.js renders PDF pages in-browser; the worker is bundled by Vite.
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
+
+const PDF_MIME = "application/pdf";
+
 interface RoomContentProps {
   roomId: string;
   presentationId: string;
+  presentationMimeType?: string;
   token: string;
   sessionToken: string;
   roomRole: string;
@@ -51,6 +62,9 @@ function WebSocketConnection({
   onCursorMove,
   onCursorHide,
   onChatWarning,
+  onSlideError,
+  onPdfContent,
+  onUnauthorizedRole,
   wsRef,
   onConnectionClose
 }: {
@@ -71,6 +85,8 @@ function WebSocketConnection({
   onCursorMove?: (pos: { x: number; y: number }) => void;
   onCursorHide?: () => void;
   onChatWarning: (message: string) => void;
+  onSlideError?: (message: string) => void;
+  onPdfContent?: (fileId: string) => void;
   onUnauthorizedRole?: () => void;
   wsRef: { current: PartySocket | null };
   onConnectionError?: (message: string) => void;
@@ -90,6 +106,8 @@ function WebSocketConnection({
       const data = JSON.parse(e.data);
       if (data.type === 'slide_content') {
         onSlideContent(data.slides, data.presentationId);
+      } else if (data.type === 'pdf_content') {
+        onPdfContent?.(data.fileId);
       } else if (data.type === 'slide_change') {
         onSlideChange(data.slideIndex);
       } else if (data.type === 'user_count') {
@@ -127,6 +145,8 @@ function WebSocketConnection({
         console.error('Server error:', data.message)
         if (data.errorCode === 'unauthorized_role') {
           onUnauthorizedRole?.()
+        } else {
+          onSlideError?.(data.message)
         }
       }
     },
@@ -152,6 +172,7 @@ function WebSocketConnection({
 function RoomContent({
   roomId,
   presentationId,
+  presentationMimeType,
   token,
   sessionToken,
   roomRole,
@@ -169,6 +190,13 @@ function RoomContent({
   const [activePresentationId, setActivePresentationId] = useState(presentationId);
   const [slideImage, setSlideImage] = useState<string>('')
   const [currentSlide, setCurrentSlide] = useState(0)
+  const [slideError, setSlideError] = useState<string | null>(null)
+  const [pdfFileId, setPdfFileId] = useState<string | null>(null)
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
+  const [pdfPageCount, setPdfPageCount] = useState(0)
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const isPdf = presentationMimeType === PDF_MIME
+  const totalSlides = pdfDoc ? pdfPageCount : slideContent.length
   const [userCount, setUserCount] = useState(1)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [mutedUsers, setMutedUsers] = useState<Set<string>>(new Set())
@@ -228,7 +256,20 @@ function RoomContent({
 
   const handleSlideContent = useCallback((slides: MockSlideProps[], pid?: string) => {
     setSlideContent(slides)
+    setSlideError(null)
+    // Switching from a PDF to a Slides deck: drop the PDF so the image path renders.
+    setPdfFileId(null)
+    setPdfDoc(null)
+    setPdfPageCount(0)
     if (pid) setActivePresentationId(pid)
+  }, [])
+
+  const handlePdfContent = useCallback((fileId: string) => {
+    // Switching to a PDF: drop any Slides state so the canvas path renders.
+    setSlideContent([])
+    setSlideImage('')
+    setSlideError(null)
+    setPdfFileId(fileId)
   }, [])
 
   const handleChatMessage = useCallback((msg: ChatMessage) => {
@@ -299,11 +340,13 @@ function RoomContent({
   }, [])
 
   const sendCursorPosition = useCallback((clientX: number, clientY: number) => {
-    if (!wsRef.current || !slideImgRef.current) return
+    // Slides render into <img>, PDFs into <canvas>; use whichever is mounted.
+    const contentEl = slideImgRef.current ?? pdfCanvasRef.current
+    if (!wsRef.current || !contentEl) return
     const now = Date.now()
     if (now - lastCursorSendRef.current < 16) return
     lastCursorSendRef.current = now
-    const rect = slideImgRef.current.getBoundingClientRect()
+    const rect = contentEl.getBoundingClientRect()
     const x = (clientX - rect.left) / rect.width
     const y = (clientY - rect.top) / rect.height
     if (x < 0 || x > 1 || y < 0 || y > 1) return
@@ -404,14 +447,87 @@ function RoomContent({
 
   // Send load_slide message when presentationId becomes available
   useEffect(() => {
-    if (socketConnected && presentationId && token && wsRef.current && !useMockApi) {
+    if (!(socketConnected && presentationId && wsRef.current && !useMockApi)) return
+    setSlideError(null)
+    if (isPdf) {
+      // The PDF proxy resolves the host's Google token server-side, so no token here.
+      wsRef.current.send(JSON.stringify({
+        type: 'load_pdf',
+        fileId: presentationId,
+      }))
+    } else if (token) {
       wsRef.current.send(JSON.stringify({
         type: 'load_slide',
         presentationId: presentationId,
         token: token
       }))
     }
-  }, [socketConnected, presentationId, token])
+  }, [socketConnected, presentationId, token, isPdf])
+
+  // Load the PDF (every participant) once a pdf_content broadcast provides the fileId.
+  // The server proxy streams the host's Drive PDF; pdf.js renders it locally.
+  useEffect(() => {
+    if (!pdfFileId || useMockApi) return
+    let cancelled = false
+    setSlideError(null)
+    setPdfDoc(null)
+    setPdfPageCount(0)
+    const url = `${BASE_URL}/api/pdf/${pdfFileId}?roomId=${roomId}`
+    const loadingTask = pdfjsLib.getDocument({
+      url,
+      withCredentials: true,
+      // One credentialed request — avoids Range preflight against the API origin.
+      disableRange: true,
+      disableStream: true,
+    })
+    loadingTask.promise
+      .then((doc) => {
+        if (cancelled) return
+        setPdfDoc(doc)
+        setPdfPageCount(doc.numPages)
+      })
+      .catch((err) => {
+        console.error('Failed to load PDF:', err)
+        if (!cancelled) setSlideError('Failed to load this PDF. The host may need to reconnect Google.')
+      })
+    // Destroying the loading task tears down the document and its worker.
+    return () => {
+      cancelled = true
+      loadingTask.destroy().catch(() => {})
+    }
+  }, [pdfFileId, roomId])
+
+  // Render the current PDF page to the canvas.
+  useEffect(() => {
+    if (!pdfDoc) return
+    let cancelled = false
+    const holder: { task?: { cancel: () => void } } = {}
+    pdfDoc.getPage(currentSlide + 1).then((page) => {
+      if (cancelled) return
+      const canvas = pdfCanvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const viewport = page.getViewport({ scale: 1.5 })
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      const task = page.render({ canvas, canvasContext: ctx, viewport })
+      holder.task = task
+      task.promise.catch(() => { /* cancelled renders reject; ignore */ })
+    }).catch((err) => console.error('Failed to render PDF page:', err))
+    return () => {
+      cancelled = true
+      holder.task?.cancel()
+    }
+  }, [pdfDoc, currentSlide])
+
+  // Host broadcasts page changes for PDFs (Slides do this via the image effect below).
+  useEffect(() => {
+    if (!pdfDoc) return
+    if (roomRole === 'host' && wsRef.current) {
+      wsRef.current.send(JSON.stringify({ type: 'slide_change', slideIndex: currentSlide }))
+    }
+  }, [currentSlide, pdfDoc, roomRole])
 
   useEffect(() => {
     if (useMockApi) {
@@ -523,6 +639,8 @@ function RoomContent({
             }
           }}
           onSlideContent={handleSlideContent}
+          onSlideError={setSlideError}
+          onPdfContent={handlePdfContent}
           onSlideChange={setCurrentSlide}
           onUserCount={setUserCount}
           onChatMessage={handleChatMessage}
@@ -631,7 +749,32 @@ function RoomContent({
                   Leave Room
                 </button>
               </div>
-              {slideImage ? (
+              {pdfDoc ? (
+                <div
+                  className="relative max-w-full max-h-full"
+                  style={{ touchAction: roomRole === 'host' && laserEnabled ? 'none' : undefined }}
+                  onMouseMove={handleMouseMove}
+                  onMouseLeave={handleMouseLeave}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                >
+                  <canvas
+                    ref={pdfCanvasRef}
+                    className="max-w-full max-h-full object-contain block"
+                  />
+                </div>
+              ) : slideError ? (
+                <div className="max-w-sm text-center px-4">
+                  <div className="text-red-400 text-sm sm:text-base font-medium">{slideError}</div>
+                  {!isPdf && (
+                    <div className="text-gray-400 text-xs sm:text-sm mt-2">
+                      Make sure you picked a Google Slides presentation (not an uploaded PDF or PowerPoint) and that your Google connection is still valid.
+                    </div>
+                  )}
+                </div>
+              ) : isPdf ? (
+                <div className="text-gray-400 text-sm sm:text-base">Loading PDF…</div>
+              ) : slideImage ? (
                 <div
                   className="relative max-w-full max-h-full"
                   style={{ touchAction: roomRole === 'host' && laserEnabled ? 'none' : undefined }}
@@ -646,23 +789,30 @@ function RoomContent({
                     alt={`Slide ${currentSlide + 1}`}
                     className="max-w-full max-h-full object-contain block"
                   />
-                  {laserCursor && (
-                    <div
-                      className="absolute pointer-events-none"
-                      style={{
-                        left: `${laserCursor.x * 100}%`,
-                        top: `${laserCursor.y * 100}%`,
-                        transform: 'translate(-50%, -50%)',
-                      }}
-                    >
-                      <div className="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_4px_rgba(239,68,68,0.7)]" />
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="text-gray-400 text-sm sm:text-base">Loading slide...</div>
               )}
-            
+
+              {/* Laser dot positioned in viewport pixels from the media's real rect —
+                  robust to any wrapper sizing, so it tracks the pointer exactly. */}
+              {laserCursor && (slideImgRef.current || pdfCanvasRef.current) && (() => {
+                const el = (slideImgRef.current ?? pdfCanvasRef.current)!
+                const r = el.getBoundingClientRect()
+                return (
+                  <div
+                    className="fixed pointer-events-none z-30"
+                    style={{
+                      left: r.left + laserCursor.x * r.width,
+                      top: r.top + laserCursor.y * r.height,
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-red-500 shadow-[0_0_10px_4px_rgba(239,68,68,0.7)]" />
+                  </div>
+                )
+              })()}
+
               {roomRole === 'host' && (
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10">
                   <button
@@ -689,16 +839,16 @@ function RoomContent({
                 </button>
                 <button
                   className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
-                  onClick={() => setCurrentSlide(prev => Math.min(slideContent.length - 1, prev + 1))}
-                  disabled={currentSlide >= slideContent.length - 1}
+                  onClick={() => setCurrentSlide(prev => Math.min(totalSlides - 1, prev + 1))}
+                  disabled={currentSlide >= totalSlides - 1}
                 >
                   ❯
                 </button>
               </div>
             </div>
-         
+
             <div className="bg-gray-800 text-white text-center py-1.5 sm:py-2 text-xs sm:text-sm">
-              Slide {currentSlide + 1} of {slideContent.length}
+              Slide {currentSlide + 1} of {totalSlides}
             </div>
           </div>
 

@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { AIE } from 'aie/react'
 import './App.css'
 import { ThemeProvider } from './lib/ThemeContext'
 
@@ -31,9 +32,16 @@ async function enableMocking() {
 enableMocking().then(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <ThemeProvider>
-        <RouterProvider router={router} />
-      </ThemeProvider>
+      <AIE
+        sessionId="presento"
+        serverUrl="http://localhost:4388"
+        enabled={import.meta.env.DEV}
+        sourceRoot="/home/mahi/web/presento/apps/client"
+      >
+        <ThemeProvider>
+          <RouterProvider router={router} />
+        </ThemeProvider>
+      </AIE>
     </StrictMode>,
   )
 })
