@@ -1,0 +1,80 @@
+name: Deploy
+
+# Runs when you publish a GitHub Release (Releases → Draft/Publish).
+# You can also trigger it by hand from the Actions tab (workflow_dispatch).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  # ── Backend → Cloudflare Workers ────────────────────────────────
+  deploy-server:
+    # Only deploy for a release tagged exactly "production" (or a manual run).
+    # A "staging" (or any other) tag is ignored.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/server
+          command: deploy
+
+  # ── Frontend → Cloudflare Pages ─────────────────────────────────
+  deploy-client:
+    # Only deploy for a release tagged exactly "production" (or a manual run).
+    # A "staging" (or any other) tag is ignored.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build client
+        working-directory: apps/client
+        # Vite inlines VITE_* at build time and does NOT error on a missing one:
+        # it silently bakes in `undefined` and the deploy succeeds broken. Fail loudly instead.
+        run: |
+          for v in VITE_BACKEND_BASE_URL VITE_BACKEND_API_URL VITE_PARTYKIT_SERVER_URL \
+                   VITE_CLIENT_URL VITE_DEVELOPER_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty. Set it under Settings → Secrets and variables → Actions."
+              exit 1
+            fi
+          done
+          bun run build
+        env:
+          VITE_BACKEND_BASE_URL: ${{ vars.VITE_BACKEND_BASE_URL }}
+          VITE_BACKEND_API_URL: ${{ vars.VITE_BACKEND_API_URL }}
+          VITE_PARTYKIT_SERVER_URL: ${{ vars.VITE_PARTYKIT_SERVER_URL }}
+          VITE_CLIENT_URL: ${{ vars.VITE_CLIENT_URL }}
+          VITE_USE_MOCK_API: "false"
+          VITE_DEVELOPER_KEY: ${{ secrets.VITE_DEVELOPER_KEY }}
+      - name: Deploy Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/client/dist --project-name=presento --branch=main
+
+  # ── Realtime → PartyKit ─────────────────────────────────────────
+  deploy-partykit:
+    # Only deploy for a release tagged exactly "production" (or a manual run).
+    # A "staging" (or any other) tag is ignored.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Deploy PartyKit
+        run: bunx partykit deploy
+        env:
+          PARTYKIT_TOKEN: ${{ secrets.PARTYKIT_TOKEN }}
+          PARTYKIT_LOGIN: ${{ secrets.PARTYKIT_LOGIN }}

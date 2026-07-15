@@ -15,6 +15,26 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 
 const PDF_MIME = "application/pdf";
 
+function SlideLoader({ label, progress }: { label: string; progress?: number | null }) {
+  const showBar = typeof progress === "number";
+  return (
+    <div className="flex flex-col items-center gap-3 text-gray-300 w-56 max-w-[70vw]">
+      <span className="loading loading-spinner loading-lg text-[#BB8856]" />
+      <span className="text-sm sm:text-base">
+        {label}{showBar ? ` ${progress}%` : ""}
+      </span>
+      {showBar && (
+        <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className="h-full bg-[#BB8856] transition-[width] duration-150"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface RoomContentProps {
   roomId: string;
   presentationId: string;
@@ -194,6 +214,7 @@ function RoomContent({
   const [pdfFileId, setPdfFileId] = useState<string | null>(null)
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [pdfPageCount, setPdfPageCount] = useState(0)
+  const [pdfProgress, setPdfProgress] = useState<number | null>(null)
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const isPdf = presentationMimeType === PDF_MIME
   const totalSlides = pdfDoc ? pdfPageCount : slideContent.length
@@ -472,6 +493,7 @@ function RoomContent({
     setSlideError(null)
     setPdfDoc(null)
     setPdfPageCount(0)
+    setPdfProgress(0)
     const url = `${BASE_URL}/api/pdf/${pdfFileId}?roomId=${roomId}`
     const loadingTask = pdfjsLib.getDocument({
       url,
@@ -480,9 +502,15 @@ function RoomContent({
       disableRange: true,
       disableStream: true,
     })
+    // Report download progress (null if the server didn't send Content-Length).
+    loadingTask.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+      if (cancelled) return
+      setPdfProgress(total ? Math.min(100, Math.round((loaded / total) * 100)) : null)
+    }
     loadingTask.promise
       .then((doc) => {
         if (cancelled) return
+        setPdfProgress(null)
         setPdfDoc(doc)
         setPdfPageCount(doc.numPages)
       })
@@ -773,7 +801,7 @@ function RoomContent({
                   )}
                 </div>
               ) : isPdf ? (
-                <div className="text-gray-400 text-sm sm:text-base">Loading PDF…</div>
+                <SlideLoader label="Loading PDF…" progress={pdfProgress} />
               ) : slideImage ? (
                 <div
                   className="relative max-w-full max-h-full"
@@ -791,7 +819,7 @@ function RoomContent({
                   />
                 </div>
               ) : (
-                <div className="text-gray-400 text-sm sm:text-base">Loading slide...</div>
+                <SlideLoader label="Loading slide…" />
               )}
 
               {/* Laser dot positioned in viewport pixels from the media's real rect —
