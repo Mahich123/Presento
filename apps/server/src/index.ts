@@ -2,12 +2,36 @@ import { Hono } from "hono";
 import { createAuth } from "./lib/auth";
 import { cors } from "hono/cors";
 import { type ENV } from "./lib/env";
-import { google } from "googleapis";
 import { createDb } from "./db";
 import { account, room, roomParticipant, roomSlide, session as authSession, user } from "./db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+
+async function refreshGoogleAccessToken(
+  env: ENV,
+  refreshToken: string
+): Promise<string | null> {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(
+      `Google token refresh failed (${res.status}): ${await res.text()}`
+    );
+  }
+
+  const data = (await res.json()) as { access_token?: string };
+  return data.access_token ?? null;
+}
 
 const app = new Hono<{ Bindings: ENV }>()
   .basePath("/api")
@@ -484,18 +508,9 @@ const app = new Hono<{ Bindings: ENV }>()
         return c.json({ error: "No refresh token available" }, 400);
       }
 
-      const oauth2Client = new google.auth.OAuth2(
-        c.env.GOOGLE_CLIENT_ID,
-        c.env.GOOGLE_CLIENT_SECRET,
-        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
-      );
-      oauth2Client.setCredentials({
-        refresh_token: refreshToken,
-      });
-
       let token: string | null | undefined;
       try {
-        ({ token } = await oauth2Client.getAccessToken());
+        token = await refreshGoogleAccessToken(c.env, refreshToken);
       } catch (err) {
         // e.g. invalid_grant when the refresh token was revoked — needs reconnect.
         console.error("Google token refresh failed:", err);
@@ -591,13 +606,7 @@ const app = new Hono<{ Bindings: ENV }>()
       if (!refreshToken) {
         return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
       }
-      const oauth2Client = new google.auth.OAuth2(
-        c.env.GOOGLE_CLIENT_ID,
-        c.env.GOOGLE_CLIENT_SECRET,
-        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
-      );
-      oauth2Client.setCredentials({ refresh_token: refreshToken });
-      const { token } = await oauth2Client.getAccessToken();
+      const token = await refreshGoogleAccessToken(c.env, refreshToken);
       if (!token) {
         return c.json({ error: "Failed to refresh access token" }, 400);
       }
@@ -698,16 +707,7 @@ const app = new Hono<{ Bindings: ENV }>()
         return c.json({ error: "Token expired, host needs to reconnect Google account" }, 401);
       }
 
-      const oauth2Client = new google.auth.OAuth2(
-        c.env.GOOGLE_CLIENT_ID,
-        c.env.GOOGLE_CLIENT_SECRET,
-        `${c.env.BACKEND_BASE_URL}/api/auth/callback/google`
-      );
-      oauth2Client.setCredentials({
-        refresh_token: refreshToken,
-      });
-
-      const { token } = await oauth2Client.getAccessToken();
+      const token = await refreshGoogleAccessToken(c.env, refreshToken);
 
       if (!token) {
         return c.json({ error: "Failed to refresh access token" }, 400);
