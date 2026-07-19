@@ -4,9 +4,18 @@ import { cors } from "hono/cors";
 import { type ENV } from "./lib/env";
 import { createDb } from "./db";
 import { account, room, roomParticipant, roomSlide, session as authSession, user } from "./db/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { generateQuiz, extractSlidesText, QuizError } from "./lib/quiz";
+const ROOM_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+async function closeRoom(db: ReturnType<typeof createDb>, roomId: string) {
+  await db
+    .update(room)
+    .set({ isActive: false, closedAt: new Date() })
+    .where(eq(room.id, roomId));
+}
 
 async function refreshGoogleAccessToken(
   env: ENV,
@@ -31,6 +40,43 @@ async function refreshGoogleAccessToken(
 
   const data = (await res.json()) as { access_token?: string };
   return data.access_token ?? null;
+}
+async function resolveGoogleAccessToken(
+  env: ENV,
+  db: ReturnType<typeof createDb>,
+  userId: string
+): Promise<{ ok: true; token: string } | { ok: false; error: string; status: 400 | 401 }> {
+  const googleAccount = await db
+    .select()
+    .from(account)
+    .where(and(eq(account.userId, userId), eq(account.providerId, "google")))
+    .limit(1);
+
+  if (googleAccount.length === 0 || !googleAccount[0].accessToken) {
+    return { ok: false, error: "Host's Google account not connected", status: 400 };
+  }
+
+  let accessToken = googleAccount[0].accessToken;
+  const refreshToken = googleAccount[0].refreshToken;
+  const tokenExpiry = googleAccount[0].accessTokenExpiresAt;
+  const tokenExpired = !tokenExpiry || Date.now() >= Number(tokenExpiry);
+
+  if (tokenExpired) {
+    if (!refreshToken) {
+      return { ok: false, error: "Token expired, host needs to reconnect Google account", status: 401 };
+    }
+    const token = await refreshGoogleAccessToken(env, refreshToken);
+    if (!token) {
+      return { ok: false, error: "Failed to refresh access token", status: 400 };
+    }
+    await db
+      .update(account)
+      .set({ accessToken: token, accessTokenExpiresAt: new Date(Date.now() + 55 * 60 * 1000) })
+      .where(and(eq(account.userId, userId), eq(account.providerId, "google")));
+    accessToken = token;
+  }
+
+  return { ok: true, token: accessToken };
 }
 
 const app = new Hono<{ Bindings: ENV }>()
@@ -77,6 +123,15 @@ const app = new Hono<{ Bindings: ENV }>()
 
     try {
       if (!isJoining) {
+        await db
+          .delete(room)
+          .where(
+            and(
+              eq(room.isActive, false),
+              lt(room.closedAt, new Date(Date.now() - ROOM_RETENTION_MS))
+            )
+          );
+
         await db.insert(room).values({
           id: roomId,
           hostId: session.user.id,
@@ -100,7 +155,16 @@ const app = new Hono<{ Bindings: ENV }>()
         }
 
         if (!existingRoom[0].isActive) {
-          return c.json({ error: "Room is inactive" }, 403);
+          if (existingRoom[0].hostId !== session.user.id) {
+            return c.json(
+              { error: "This room hasn't been opened by the host yet." },
+              403
+            );
+          }
+          await db
+            .update(room)
+            .set({ isActive: true, closedAt: null })
+            .where(eq(room.id, roomId));
         }
 
         const alreadyParticipant = await db
@@ -180,11 +244,11 @@ const app = new Hono<{ Bindings: ENV }>()
       );
 
     if (activeParticipants.length === 0) {
-      await db.delete(room).where(eq(room.id, roomId));
-      return c.json({ success: true, deleted: true });
+      await closeRoom(db, roomId);
+      return c.json({ success: true, closed: true });
     }
 
-    return c.json({ success: true, deleted: false });
+    return c.json({ success: true, closed: false });
   })
   .post("/party/:roomId/presence", async (c) => {
     const auth = createAuth(c.env);
@@ -238,11 +302,11 @@ const app = new Hono<{ Bindings: ENV }>()
       );
 
     if (activeParticipants.length === 0) {
-      await db.delete(room).where(eq(room.id, roomId));
-      return c.json({ success: true, deleted: true });
+      await closeRoom(db, roomId);
+      return c.json({ success: true, closed: true });
     }
 
-    return c.json({ success: true, deleted: false });
+    return c.json({ success: true, closed: false });
   })
   .post("/party/:roomId/close", async (c) => {
     const auth = createAuth(c.env);
@@ -269,8 +333,8 @@ const app = new Hono<{ Bindings: ENV }>()
       return c.json({ error: "Not a participant" }, 403);
     }
 
-    await db.delete(room).where(eq(room.id, roomId));
-    return c.json({ success: true, deleted: true });
+    await closeRoom(db, roomId);
+    return c.json({ success: true, closed: true });
   })
 
   .get("/party/session-user", async (c) => {
@@ -812,7 +876,93 @@ const app = new Hono<{ Bindings: ENV }>()
       console.error("Error fetching slide content:", error);
       return c.json({ error: "Internal server error", message: error instanceof Error ? error.message : String(error) }, 500);
     }
-  });
+  })
+  .post("generate-quiz",
+    zValidator("json", z.object({
+      provider: z.enum(["anthropic", "openai", "openrouter"]),
+      apiKey: z.string().min(1),
+      count: z.number().int().min(1).max(10).optional(),
+      source: z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("slides"),
+          presentationId: z.string().min(1),
+          roomId: z.string().optional(),
+        }),
+        z.object({ type: z.literal("text"), text: z.string().min(1) }),
+      ]),
+    })),
+    async (c) => {
+      const auth = createAuth(c.env);
+      const db = createDb(c.env);
+
+      const session = await auth.api.getSession({ headers: c.req.raw.headers });
+      if (!session) {
+        return c.json({ error: "Not authenticated" }, 401);
+      }
+
+      const { provider, apiKey, count, source } = c.req.valid("json");
+
+      // Gather the deck text from whichever source the host is presenting.
+      let deckText: string;
+      if (source.type === "text") {
+        deckText = source.text;
+      } else {
+        // Slides: read the presentation with the host's Google token.
+        let hostUserId = session.user.id;
+        if (source.roomId) {
+          const existingRoom = await db
+            .select()
+            .from(room)
+            .where(eq(room.id, source.roomId))
+            .limit(1);
+          if (existingRoom.length > 0) hostUserId = existingRoom[0].hostId;
+        }
+
+        const resolved = await resolveGoogleAccessToken(c.env, db, hostUserId);
+        if (!resolved.ok) {
+          return c.json({ error: resolved.error }, resolved.status);
+        }
+
+        const slidesRes = await fetch(
+          `https://slides.googleapis.com/v1/presentations/${source.presentationId}`,
+          { headers: { Authorization: `Bearer ${resolved.token}` } }
+        );
+        if (!slidesRes.ok) {
+          const detail = await slidesRes.text();
+          console.error("Slides fetch for quiz failed:", detail);
+          return c.json({ error: "Couldn't read the slides. Check your Google connection." }, 502);
+        }
+        deckText = extractSlidesText(await slidesRes.json());
+      }
+
+      deckText = deckText.trim();
+      if (deckText.length < 40) {
+        return c.json(
+          { error: "There isn't enough text in this deck to build a quiz. Add slides with more text, or write questions manually." },
+          422
+        );
+      }
+
+      // Cap how much we send to the model — keeps latency and cost sane on big decks.
+      const MAX_CHARS = 24000;
+      const clipped = deckText.length > MAX_CHARS ? deckText.slice(0, MAX_CHARS) : deckText;
+
+      try {
+        const questions = await generateQuiz({
+          provider,
+          apiKey,
+          text: clipped,
+          count: count ?? 5,
+        });
+        return c.json({ questions });
+      } catch (err) {
+        if (err instanceof QuizError) {
+          return c.json({ error: err.message }, err.status as 400);
+        }
+        console.error("Quiz generation error:", err);
+        return c.json({ error: "Quiz generation failed unexpectedly." }, 500);
+      }
+    });
 
 // export default {
 //   port: env.PORT,

@@ -80,6 +80,10 @@ export const room = sqliteTable("room", {
   id: text("id").primaryKey(),
   hostId: text("host_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   isActive: integer("is_active", { mode: "boolean" }).default(true).notNull(),
+  // When the room last emptied. Retention is measured from here, not from
+  // createdAt — otherwise a room opened yesterday would be swept the instant
+  // it closed today. Null while the room is open.
+  closedAt: integer("closed_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),

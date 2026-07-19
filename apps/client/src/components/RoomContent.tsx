@@ -6,6 +6,20 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { BASE_URL, client } from "../utils/honoClient";
 import { Ban } from "lucide-react";
 import userAuth from "../utils/userSession";
+import PollPanel from "./PollPanel";
+import PollStage from "./PollStage";
+import RoomSettings, { type Participant } from "./RoomSettings";
+import QuestionSetManager from "./QuestionSetManager";
+import { nanoid } from "nanoid";
+import { DEFAULT_POLL_DURATION_MS, EMPTY_POLL_STATE, type PollState } from "../utils/pollTypes";
+import {
+  markSetLoaded,
+  readySetQuestions,
+  toAskable,
+  type DraftQuestion,
+  type QuestionSet,
+} from "../utils/questionSets";
+import type { AIConfig } from "../utils/aiConfig";
 
 // pdf.js renders PDF pages in-browser; the worker is bundled by Vite.
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -53,6 +67,14 @@ interface MockSlideProps {
   title: string;
 }
 
+// Someone knocking on a locked room, waiting for the host to admit them.
+export interface JoinRequest {
+  connId: string;
+  userId: string | null;
+  userName: string;
+  requestedAt: number;
+}
+
 interface ChatMessage {
   id: string;
   userId: string;
@@ -84,6 +106,15 @@ function WebSocketConnection({
   onChatWarning,
   onSlideError,
   onPdfContent,
+  onPollState,
+  onPollTick,
+  onParticipants,
+  onRoomSettings,
+  onRoomLocked,
+  onJoinPending,
+  onJoinApproved,
+  onJoinDenied,
+  onJoinRequests,
   onUnauthorizedRole,
   wsRef,
   onConnectionClose
@@ -107,10 +138,19 @@ function WebSocketConnection({
   onChatWarning: (message: string) => void;
   onSlideError?: (message: string) => void;
   onPdfContent?: (fileId: string) => void;
+  onPollState?: (state: PollState) => void;
+  onPollTick?: (remainingMs: number) => void;
+  onParticipants?: (participants: Participant[]) => void;
+  onRoomSettings?: (settings: { chatEnabled: boolean; locked: boolean }) => void;
+  onRoomLocked?: () => void;
+  onJoinPending?: (expiresAt: number) => void;
+  onJoinApproved?: () => void;
+  onJoinDenied?: (message: string, reason: 'denied' | 'no_answer') => void;
+  onJoinRequests?: (requests: JoinRequest[]) => void;
   onUnauthorizedRole?: () => void;
   wsRef: { current: PartySocket | null };
   onConnectionError?: (message: string) => void;
-  onConnectionClose?: () => void;
+  onConnectionClose?: (closeCode?: number) => void;
 }) {
   const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
 
@@ -161,18 +201,52 @@ function WebSocketConnection({
         onUserLeft(data.userName)
       } else if (data.type === 'chat_warning') {
         onChatWarning(data.message)
+      } else if (data.type === 'poll_state') {
+        onPollState?.({
+          poll: data.poll ?? null,
+          counts: data.counts ?? {},
+          countsVisible: !!data.countsVisible,
+          totalVotes: Number(data.totalVotes ?? 0),
+          eligibleVoters: Number(data.eligibleVoters ?? 0),
+          myVote: data.myVote ?? null,
+          remainingMs: data.remainingMs === null || data.remainingMs === undefined
+            ? null
+            : Number(data.remainingMs),
+          queueTotal: Number(data.queueTotal ?? 0),
+          queueAsked: Number(data.queueAsked ?? 0),
+          queuePreview: data.queuePreview ?? [],
+        })
+      } else if (data.type === 'poll_tick') {
+        onPollTick?.(Number(data.remainingMs ?? 0))
+      } else if (data.type === 'join_pending') {
+        onJoinPending?.(Number(data.expiresAt ?? 0))
+      } else if (data.type === 'join_approved') {
+        onJoinApproved?.()
+      } else if (data.type === 'join_denied') {
+        onJoinDenied?.(data.message ?? 'The host didn\'t let you in.', data.reason ?? 'denied')
+      } else if (data.type === 'join_requests') {
+        onJoinRequests?.(data.requests ?? [])
+      } else if (data.type === 'participants') {
+        onParticipants?.(data.participants ?? [])
+      } else if (data.type === 'room_settings') {
+        onRoomSettings?.({ chatEnabled: data.chatEnabled !== false, locked: data.locked === true })
       } else if (data.type === 'error') {
         console.error('Server error:', data.message)
         if (data.errorCode === 'unauthorized_role') {
           onUnauthorizedRole?.()
+        } else if (data.errorCode === 'room_locked') {
+          onRoomLocked?.()
         } else {
           onSlideError?.(data.message)
         }
       }
     },
-    onClose() {
+    onClose(e) {
       onConnected(false)
-      onConnectionClose?.()
+      // Pass the close code through — it's the authoritative reason. The
+      // server's "room_locked" message and its close race each other, so
+      // relying on the message alone loses the reason half the time.
+      onConnectionClose?.(e?.code)
     },
     onError(e) {
       console.error('WebSocket error:', e)
@@ -226,6 +300,15 @@ function RoomContent({
   const [chatOpen, setChatOpen] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [activeTab, setActiveTab] = useState<'chat' | 'polls' | 'settings'>('chat')
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [chatEnabled, setChatEnabled] = useState(true)
+  const [roomLocked, setRoomLocked] = useState(false)
+  const [pollState, setPollState] = useState<PollState>(EMPTY_POLL_STATE)
+  const [pollUnread, setPollUnread] = useState(false)
+  const [setManagerOpen, setSetManagerOpen] = useState(false)
+  const activeTabRef = useRef<'chat' | 'polls' | 'settings'>('chat')
+  const lastPollIdRef = useRef<string | null>(null)
   const [hostLeftRemainingMs, setHostLeftRemainingMs] = useState<number | null>(null)
   const [hostLeftTotalMs, setHostLeftTotalMs] = useState<number | null>(null)
   const [chatWarning, setChatWarning] = useState<string | null>(null)
@@ -251,6 +334,26 @@ function RoomContent({
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [socketRetryKey, setSocketRetryKey] = useState(0)
+  // Turned away because the host locked the room. Kept separate from a generic
+  // disconnect so the close handler can't overwrite the reason, and so we stop
+  // reconnecting into a room that will keep rejecting us.
+  const [lockedOut, setLockedOut] = useState(false)
+  const ROOM_LOCKED_CLOSE_CODE = 4003
+  const LOCKED_MESSAGE = 'This room is locked — the host has stopped new people joining.'
+  // Waiting on the host to admit us to a locked room, and (for the host) the
+  // list of people currently knocking.
+  const [awaitingApproval, setAwaitingApproval] = useState(false)
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([])
+  const awaitingApprovalRef = useRef(false)
+  useEffect(() => { awaitingApprovalRef.current = awaitingApproval }, [awaitingApproval])
+
+  const handleApproveJoin = useCallback((connId: string) => {
+    wsRef.current?.send(JSON.stringify({ type: 'approve_join', connId }))
+  }, [])
+
+  const handleDenyJoin = useCallback((connId: string) => {
+    wsRef.current?.send(JSON.stringify({ type: 'deny_join', connId }))
+  }, [])
   const socketConnectedRef = useRef(false)
 
   useEffect(() => {
@@ -259,12 +362,18 @@ function RoomContent({
 
   useEffect(() => {
     chatOpenRef.current = chatOpen
-    if (chatOpen) setUnreadCount(0)
-  }, [chatOpen])
+    if (chatOpen && activeTab === 'chat') setUnreadCount(0)
+  }, [chatOpen, activeTab])
 
   useEffect(() => {
-    if (!chatCollapsed) setUnreadCount(0)
-  }, [chatCollapsed])
+    if (!chatCollapsed && activeTab === 'chat') setUnreadCount(0)
+  }, [chatCollapsed, activeTab])
+
+  useEffect(() => {
+    activeTabRef.current = activeTab
+    if (activeTab === 'chat') setUnreadCount(0)
+    if (activeTab === 'polls') setPollUnread(false)
+  }, [activeTab])
 
   const handleSendChat = () => {
     if (!chatInput.trim() || !wsRef.current) return
@@ -295,7 +404,7 @@ function RoomContent({
 
   const handleChatMessage = useCallback((msg: ChatMessage) => {
     setChatMessages(prev => [...prev, msg])
-    if (!chatOpenRef.current) setUnreadCount(prev => prev + 1)
+    if (!chatOpenRef.current || activeTabRef.current !== 'chat') setUnreadCount(prev => prev + 1)
   }, [])
 
   const handleMuteStatus = useCallback(({ userId, isMuted: muted }: { userId: string; isMuted: boolean }) => {
@@ -317,6 +426,130 @@ function RoomContent({
     setRoomNotification(msg)
     if (notifDismissRef.current) clearTimeout(notifDismissRef.current)
     notifDismissRef.current = setTimeout(() => setRoomNotification(null), 3500)
+  }, [])
+
+  const knownRequestsRef = useRef<Set<string>>(new Set())
+
+  const handleJoinRequests = useCallback((requests: JoinRequest[]) => {
+    const fresh = requests.filter((r) => !knownRequestsRef.current.has(r.connId))
+    knownRequestsRef.current = new Set(requests.map((r) => r.connId))
+    if (fresh.length === 1) {
+      showRoomNotification(`${fresh[0].userName} is asking to join`)
+    } else if (fresh.length > 1) {
+      showRoomNotification(`${fresh.length} people are asking to join`)
+    }
+    setJoinRequests(requests)
+  }, [showRoomNotification])
+
+
+  const handlePollState = useCallback((next: PollState) => {
+    setPollState(next)
+    const pollId = next.poll?.id ?? null
+    if (pollId && pollId !== lastPollIdRef.current) {
+      if (activeTabRef.current !== 'polls') setPollUnread(true)
+      showRoomNotification(
+        roomRoleRef.current === 'host'
+          ? 'Question sent to the room'
+          : 'The host asked a question',
+      )
+    }
+    lastPollIdRef.current = pollId
+  }, [showRoomNotification])
+
+  const handlePollTick = useCallback((remainingMs: number) => {
+    setPollState(prev => (prev.poll ? { ...prev, remainingMs } : prev))
+  }, [])
+
+  const handleCreatePoll = useCallback((
+    question: string,
+    options: string[],
+    correctIndex: number | null,
+    durationMs: number | null,
+  ) => {
+    wsRef.current?.send(JSON.stringify({ type: 'create_poll', question, options, correctIndex, durationMs }))
+  }, [])
+
+  const handleVote = useCallback((optionId: string) => {
+    wsRef.current?.send(JSON.stringify({ type: 'poll_vote', optionId }))
+  }, [])
+
+  const handleClosePoll = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'close_poll' }))
+  }, [])
+
+  const handleClearPoll = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'clear_poll' }))
+  }, [])
+
+  const handleLoadSet = useCallback((set: QuestionSet) => {
+    // Remember it so the room-close prompt can offer to keep or delete it.
+    markSetLoaded(set.id)
+    // Only send ready questions, compacted so the correct-answer index stays valid.
+    wsRef.current?.send(JSON.stringify({
+      type: 'load_queue',
+      questions: readySetQuestions(set).map(toAskable),
+    }))
+  }, [])
+
+  const handleAskNext = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'ask_next' }))
+  }, [])
+
+  const handleClearQueue = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: 'clear_queue' }))
+  }, [])
+
+  const canGenerateQuiz = isPdf ? !!pdfDoc : !!activePresentationId && slideContent.length > 0
+  const deckLabel = isPdf ? 'PDF' : 'slides'
+
+  const handleGenerateQuiz = useCallback(async (
+    config: AIConfig,
+    count: number,
+  ): Promise<DraftQuestion[]> => {
+    let source: { type: 'text'; text: string } | { type: 'slides'; presentationId: string; roomId: string }
+    if (isPdf) {
+      if (!pdfDoc) throw new Error('The PDF is still loading. Try again in a moment.')
+      const pages: string[] = []
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const page = await pdfDoc.getPage(i)
+        const content = await page.getTextContent()
+        const text = content.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ')
+          .trim()
+        if (text) pages.push(text)
+      }
+      source = { type: 'text', text: pages.join('\n\n') }
+    } else {
+      if (!activePresentationId) throw new Error('No deck is loaded yet.')
+      source = { type: 'slides', presentationId: activePresentationId, roomId }
+    }
+
+    const res = await client.api["generate-quiz"].$post({
+      json: { provider: config.provider, apiKey: config.apiKey, count, source },
+    })
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null
+      throw new Error(body?.error ?? "Couldn't generate questions.")
+    }
+
+    const data = await res.json() as { questions: { question: string; options: string[]; correctIndex: number }[] }
+    return data.questions.map((q) => ({
+      id: nanoid(8),
+      question: q.question,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      durationMs: DEFAULT_POLL_DURATION_MS,
+    }))
+  }, [isPdf, pdfDoc, activePresentationId, roomId])
+
+  const handleToggleChat = useCallback((enabled: boolean) => {
+    wsRef.current?.send(JSON.stringify({ type: 'set_chat_enabled', enabled }))
+  }, [])
+
+  const handleToggleLock = useCallback((locked: boolean) => {
+    wsRef.current?.send(JSON.stringify({ type: 'set_locked', locked }))
   }, [])
 
   const handleUserJoined = useCallback((userName: string) => {
@@ -650,7 +883,24 @@ function RoomContent({
         </div>
       )}
 
-      {!useMockApi && roomId && sessionToken && (
+      {setManagerOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto">
+          <div className="w-full max-w-2xl bg-base-100 sm:rounded-2xl shadow-2xl p-4 sm:p-6 min-h-full sm:min-h-0 sm:max-h-[88vh] sm:overflow-y-auto">
+            <QuestionSetManager
+              onClose={() => setSetManagerOpen(false)}
+              onGenerate={roomRole === 'host' ? handleGenerateQuiz : undefined}
+              canGenerate={canGenerateQuiz}
+              deckLabel={deckLabel}
+              onLoadSet={(set) => {
+                handleLoadSet(set)
+                setSetManagerOpen(false)
+                showRoomNotification(`Loaded “${set.title || 'set'}”`)
+              }}
+            />
+          </div>
+        </div>
+      )}
+      {!useMockApi && roomId && sessionToken && !lockedOut && (
         <WebSocketConnection
           key={socketRetryKey}
           roomId={roomId}
@@ -669,6 +919,34 @@ function RoomContent({
           onSlideContent={handleSlideContent}
           onSlideError={setSlideError}
           onPdfContent={handlePdfContent}
+          onPollState={handlePollState}
+          onPollTick={handlePollTick}
+          onParticipants={setParticipants}
+          onRoomSettings={({ chatEnabled: ce, locked }) => {
+            setChatEnabled(ce)
+            setRoomLocked(locked)
+          }}
+          onRoomLocked={() => {
+            setLockedOut(true)
+            setConnectionError(LOCKED_MESSAGE)
+            setConnecting(false)
+          }}
+          onJoinPending={() => {
+            setAwaitingApproval(true)
+            setConnectionError(null)
+            setConnecting(false)
+          }}
+          onJoinApproved={() => {
+            setAwaitingApproval(false)
+            setConnectionError(null)
+          }}
+          onJoinDenied={(_message, reason) => {
+            setAwaitingApproval(false)
+            setLockedOut(true)
+            setConnecting(false)
+            onRoomClosed(reason === 'no_answer' ? 'join_no_answer' : 'join_denied')
+          }}
+          onJoinRequests={handleJoinRequests}
           onSlideChange={setCurrentSlide}
           onUserCount={setUserCount}
           onChatMessage={handleChatMessage}
@@ -708,8 +986,11 @@ function RoomContent({
             setConnectionError(message)
             setConnecting(false)
           }}
-          onConnectionClose={() => {
-            if (socketConnected) {
+          onConnectionClose={(closeCode) => {
+            if (closeCode === ROOM_LOCKED_CLOSE_CODE || lockedOut) {
+              setLockedOut(true)
+              setConnectionError(LOCKED_MESSAGE)
+            } else if (socketConnected) {
               setConnectionError('Disconnected from the room.')
             }
             setConnecting(false)
@@ -717,10 +998,22 @@ function RoomContent({
         />
       )}
 
-      {socketConnected ? (
+      {socketConnected && !awaitingApproval ? (
         <>
           <div className="w-full flex-1 lg:aspect-auto flex flex-col bg-gray-900 overflow-hidden">
             <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+              {pollState.poll && (
+                <PollStage
+                  state={pollState}
+                  isHost={roomRole === 'host'}
+                  isMuted={isMuted}
+                  onVote={handleVote}
+                  onClosePoll={handleClosePoll}
+                  onClearPoll={handleClearPoll}
+                  onAskNext={handleAskNext}
+                />
+              )}
+
               {roomRole === 'viewer' && hostLeftRemainingMs !== null && (
                 <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                   <div className="flex flex-col items-center gap-3 select-none">
@@ -950,12 +1243,11 @@ function RoomContent({
             </div>
 
             <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-gray-200 bg-gray-50 rounded-t-2xl lg:rounded-t-lg shrink-0">
-              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">Chat</h3>
+              <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
+                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                <span>{userCount} {userCount === 1 ? 'user' : 'users'} online</span>
+              </div>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-600">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  <span>{userCount} {userCount === 1 ? 'user' : 'users'} online</span>
-                </div>
                 {/* Desktop collapse button */}
                 <button
                   className="hidden lg:flex p-1.5 rounded hover:bg-gray-200 transition-colors text-gray-500 hover:text-gray-700"
@@ -978,6 +1270,65 @@ function RoomContent({
                 </button>
               </div>
             </div>
+            {/* Chat / Polls tabs */}
+            <div className="flex border-b border-gray-200 shrink-0">
+              {([
+                { key: 'chat', label: 'Chat' },
+                { key: 'polls', label: 'Question' },
+                ...(roomRole === 'host' ? [{ key: 'settings', label: 'Settings' } as const] : []),
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 cursor-pointer transition-colors ${
+                    activeTab === tab.key
+                      ? 'border-[#BB8856] text-gray-900'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {tab.label}
+                  {tab.key === 'chat' && activeTab !== 'chat' && unreadCount > 0 && (
+                    <span className="bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                  {tab.key === 'polls' && pollUnread && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  )}
+                  {tab.key === 'settings' && joinRequests.length > 0 && (
+                    <span className="bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                      {joinRequests.length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'settings' && roomRole === 'host' ? (
+              <RoomSettings
+                roomId={roomId}
+                participants={participants}
+                chatEnabled={chatEnabled}
+                locked={roomLocked}
+                currentUserId={currentUserId}
+                joinRequests={joinRequests}
+                onToggleChat={handleToggleChat}
+                onToggleLock={handleToggleLock}
+                onMuteUser={handleMuteUser}
+                onApproveJoin={handleApproveJoin}
+                onDenyJoin={handleDenyJoin}
+              />
+            ) : activeTab === 'polls' ? (
+              <PollPanel
+                state={pollState}
+                isHost={roomRole === 'host'}
+                onCreate={handleCreatePoll}
+                onManageSets={() => setSetManagerOpen(true)}
+                onAskNext={handleAskNext}
+                onClearQueue={handleClearQueue}
+              />
+            ) : (
+            <>
             {roomRole === 'host' && (
             <div className="px-3 sm:px-4 py-2 border-b border-gray-100 shrink-0 ">
               <button
@@ -1026,7 +1377,12 @@ function RoomContent({
                   <p className="text-xs text-amber-700 font-medium">{chatWarning}</p>
                 </div>
               )}
-              {isMuted ? (
+              {!chatEnabled && roomRole !== 'host' ? (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
+                  <Ban className="size-4 text-gray-400 shrink-0" />
+                  <p className="text-xs text-gray-500 font-medium">The host has turned off chat.</p>
+                </div>
+              ) : isMuted ? (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200">
                   <Ban className="size-4 text-red-500 shrink-0" />
                   <p className="text-xs text-red-600 font-medium">You have been muted by the host.</p>
@@ -1051,27 +1407,54 @@ function RoomContent({
                 </div>
               )}
             </div>
+            </>
+            )}
           </div>
         </>
       ) : (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            {!sessionToken ? (
-              <p className="mt-2 text-gray-600">Waiting for session...</p>
+            {awaitingApproval ? (
+              <div className="max-w-xs mx-auto px-4">
+                <span className="loading loading-spinner loading-lg text-[#BB8856]" />
+                <p className="mt-3 font-medium text-base-content">Asking the host to let you in…</p>
+                <p className="mt-1 text-sm text-base-content/60">
+                  This room is locked. The host has been sent your request.
+                </p>
+                <button
+                  className="btn btn-sm btn-outline mt-4"
+                  onClick={handleLeaveRoom}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : !sessionToken ? (
+              <p className="mt-2 text-base-content/70">Waiting for session...</p>
             ) : connectionError ? (
               <>
-                <p className="text-red-600 text-sm sm:text-base">{connectionError}</p>
+                <p className={`text-sm sm:text-base ${lockedOut ? 'text-base-content/80' : 'text-error'}`}>
+                  {connectionError}
+                </p>
+                {lockedOut && (
+                  <p className="mt-1 text-xs text-base-content/60">
+                    Ask the host to unlock it, then try again.
+                  </p>
+                )}
                 <button
                   className="btn btn-sm btn-outline mt-3"
-                  onClick={() => setSocketRetryKey(prev => prev + 1)}
+                  onClick={() => {
+                    setLockedOut(false)
+                    setConnectionError(null)
+                    setSocketRetryKey(prev => prev + 1)
+                  }}
                 >
-                  Retry
+                  Try again
                 </button>
               </>
             ) : (
               <>
                 <span className="loading loading-spinner loading-lg"></span>
-                <p className="mt-2 text-gray-600">
+                <p className="mt-2 text-base-content/70">
                   {connecting ? 'Connecting to room...' : 'Preparing room...'}
                 </p>
               </>
