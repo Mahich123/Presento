@@ -2,22 +2,62 @@ import Header from "./Header"
 import { Link } from "@tanstack/react-router"
 import { Users, Globe, RefreshCw } from "lucide-react"
 import userAuth from "../utils/userSession"
+import { useRef } from "react"
+import gsap from "gsap"
+import { useGSAP } from "@gsap/react"
+
+const GLOW_REST_Y = 114
 
 export default function Home() {
     const { session } = userAuth()
     const ctaTo = session ? "/dashboard" : "/signup"
     const ctaText = session ? "Dashboard" : "Get Started Free"
+    const heroRef = useRef<HTMLDivElement>(null)
+    const glowRef = useRef<HTMLDivElement>(null)
+
+    useGSAP(() => {
+        const hero = heroRef.current
+        const glow = glowRef.current
+        if (!hero || !glow) return
+        gsap.set(glow, {
+            xPercent: -50,
+            yPercent: -50,
+            x: hero.offsetWidth / 2,
+            y: GLOW_REST_Y,
+        })
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+        const moveX = gsap.quickTo(glow, "x", { duration: 0.6, ease: "power3.out" })
+        const moveY = gsap.quickTo(glow, "y", { duration: 0.6, ease: "power3.out" })
+        gsap.fromTo(
+            glow,
+            { scale: 0.86 },
+            { scale: 1.14, duration: 2.2, ease: "sine.inOut", yoyo: true, repeat: -1 }
+        )
+
+        const handleMove = (event: MouseEvent) => {
+            const rect = hero.getBoundingClientRect()
+            moveX(event.clientX - rect.left)
+            moveY(event.clientY - rect.top)
+        }
+
+        window.addEventListener("mousemove", handleMove, { passive: true })
+        return () => window.removeEventListener("mousemove", handleMove)
+    }, { scope: heroRef })
 
     return (
-        <div className="min-h-screen">
+        <div className="min-h-screen bg-white dark:bg-[#0B0A09]">
             <Header />
-            <div className="relative flex flex-col items-center justify-center min-h-[calc(100vh-80px)] px-6 pt-16 pb-24 bg-linear-to-b from-[#FDF8F1] via-[#FFFDFA] to-white overflow-hidden">
-                <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 h-[420px] w-[720px] max-w-full rounded-full bg-[#BB8856]/10 blur-3xl"></div>
+            <div ref={heroRef} className="relative flex flex-col items-center justify-center min-h-[calc(100vh-80px)] px-6 pt-16 pb-24 bg-linear-to-b from-[#FDF8F1] via-[#FFFDFA] to-white dark:from-[#141210] dark:via-[#0F0D0B] dark:to-[#0B0A09] overflow-hidden">
+                <div
+                    ref={glowRef}
+                    aria-hidden
+                    className="pointer-events-none absolute left-0 top-0 w-[560px] max-w-full aspect-square rounded-full bg-[#BB8856]/10 dark:bg-[#BB8856]/20 blur-3xl will-change-transform"
+                ></div>
 
                 <div className="relative mb-8 max-w-3xl text-center">
-                    <h1 className="text-6xl lg:text-8xl font-extrabold mb-5 text-[#BB8856] tracking-tight">Presento</h1>
-                    <p className="text-[#4A403A] text-2xl lg:text-4xl font-bold leading-tight tracking-tight">Where Teaching and Learning Come Together,</p>
-                    <p className="text-[#998C8C] text-base lg:text-xl font-medium mt-3">Where instruction meets inspiration.</p>
+                    <h1 className="text-6xl lg:text-8xl font-extrabold mb-5 text-[#BB8856] dark:text-[#D4A96A] tracking-tight">Presento</h1>
+                    <p className="text-[#4A403A] dark:text-[#ECE7E2] text-2xl lg:text-4xl font-bold leading-tight tracking-tight">Where Teaching and Learning Come Together,</p>
+                    <p className="text-[#998C8C] dark:text-[#9C918B] text-base lg:text-xl font-medium mt-3">Where instruction meets inspiration.</p>
                 </div>
 
 
@@ -31,15 +71,15 @@ export default function Home() {
                 </div>
 
                 <div className="relative flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 mb-14">
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] bg-white/70 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] shadow-sm">
+                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
                         <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                         Works with PDF & PowerPoint
                     </div>
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] bg-white/70 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] shadow-sm">
+                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
                         <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                         Real-time slide sync
                     </div>
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] bg-white/70 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] shadow-sm">
+                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
                         <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                         Students join with a room code
                     </div>
@@ -84,37 +124,37 @@ export default function Home() {
                     </div>
                 </div>
             </div>
-            <div id="why-presento" className="bg-[#FEF8F0] px-4 py-16 sm:px-8 sm:py-20 md:px-10 lg:px-16 lg:py-28">
+            <div id="why-presento" className="bg-[#FEF8F0] dark:bg-[#141210] px-4 py-16 sm:px-8 sm:py-20 md:px-10 lg:px-16 lg:py-28">
                 <div className="max-w-7xl mx-auto w-full">
                     <span className="text-[#D4A96A] text-xs font-semibold uppercase tracking-widest">Why Presento</span>
-                    <h2 className="text-black text-3xl lg:text-5xl font-bold mt-3 mb-12 leading-tight">
+                    <h2 className="text-black dark:text-white text-3xl lg:text-5xl font-bold mt-3 mb-12 leading-tight">
                         Everything a great
                         <br />lesson needs
                     </h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
-                        <div className="bg-[#EFE3D0] rounded-2xl p-8 ring-1 ring-black/5">
+                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
                             <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
                                 <RefreshCw className="w-5 h-5 text-white" />
                             </div>
-                            <h3 className="text-[#1A1714] text-base font-bold mb-2">Live Sync</h3>
-                            <p className="text-[#7A6A5A] text-sm leading-relaxed">Every slide change you make is instantly visible to all students in the room, no refresh needed.</p>
+                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">Live Sync</h3>
+                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Every slide change you make is instantly visible to all students in the room, no refresh needed.</p>
                         </div>
 
-                        <div className="bg-[#EFE3D0] rounded-2xl p-8 ring-1 ring-black/5">
+                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
                             <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
                                 <Users className="w-5 h-5 text-white" />
                             </div>
-                            <h3 className="text-[#1A1714] text-base font-bold mb-2">Role-Based Views</h3>
-                            <p className="text-[#7A6A5A] text-sm leading-relaxed">Teachers control the flow. Students follow along. Each side sees exactly what they need to.</p>
+                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">Role-Based Views</h3>
+                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Teachers control the flow. Students follow along. Each side sees exactly what they need to.</p>
                         </div>
-                        <div className="bg-[#EFE3D0] rounded-2xl p-8 ring-1 ring-black/5">
+                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
                             <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
                                 <Globe className="w-5 h-5 text-white" />
                             </div>
-                            <h3 className="text-[#1A1714] text-base font-bold mb-2">No App Required</h3>
-                            <p className="text-[#7A6A5A] text-sm leading-relaxed">Students join through the browser. Nothing to install.</p>
+                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">No App Required</h3>
+                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Students join through the browser. Nothing to install.</p>
                         </div>
                     </div>
                 </div>

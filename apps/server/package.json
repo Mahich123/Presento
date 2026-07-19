@@ -8,10 +8,12 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.3",
     "@hono/eslint-config": "^2.0.3",
     "@hono/zod-validator": "^0.7.6",
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "^0.44.7",
+    "openai": "^6.48.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { authClient } from "../lib/auth-client"
 import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
@@ -6,6 +6,7 @@ import { nanoid } from "nanoid"
 import RoomContent from "./RoomContent"
 import Toast from "./Toast"
 import { useNavigate } from "@tanstack/react-router"
+import { clearLoadedSet, deleteSet, getLoadedSet, type QuestionSet } from "../utils/questionSets"
 
 const GOOGLE_SLIDES_MIME = 'application/vnd.google-apps.presentation'
 const PDF_MIME = 'application/pdf'
@@ -58,6 +59,9 @@ async function ensureGoogleSlidesId(
         'This file type is not supported. Please pick a Google Slides or PowerPoint (.pptx) file.',
     )
 }
+const restoreAttempted = new Set<string>()
+
+let justLeftRoomId = ''
 
 export default function CollaborationRoom() {
     const navigate = useNavigate()
@@ -75,9 +79,11 @@ export default function CollaborationRoom() {
     const [pendingRejoinRoomId, setPendingRejoinRoomId] = useState<string>("")
     const [isJoiningFromPrompt, setIsJoiningFromPrompt] = useState(false)
     const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false)
+    const [setToReview, setSetToReview] = useState<QuestionSet | null>(null)
     const [roomRole, setRoomRole] = useState<'host' | 'viewer' | ''>('')
     const [toast, setToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null)
     const storedRoomIdKey = 'roomId'
+    const rejoinResolvedRef = useRef(false)
     const storedSelectedFilesKey = 'selectedFiles'
     const storedSelectedFilesRoomKey = 'selectedFilesRoomId'
     const suppressRejoinPromptKey = 'suppressRejoinPrompt'
@@ -122,6 +128,8 @@ export default function CollaborationRoom() {
                 setRespData(JSON.stringify(res))
                 setRoomId(newRoomId)
                 setSelectedFiles([])
+                rejoinResolvedRef.current = true
+                setPendingRejoinRoomId('')
                 localStorage.setItem(storedRoomIdKey, newRoomId)
                 setRoomRole(normalizeRole(res.role, 'host'))
                 setShowModal(true)
@@ -139,18 +147,18 @@ export default function CollaborationRoom() {
         }
     }
 
-    const joinRoomById = useCallback(async (targetRoomId: string) => {
+    const joinRoomById = useCallback(async (targetRoomId: string): Promise<'ok' | 'gone' | 'retry'> => {
         const trimmedRoomId = targetRoomId.trim()
         if (!trimmedRoomId) {
             showToast("Please enter a valid room ID to join.", 'error')
-            return false
+            return 'retry'
         }
 
         const token = session?.session.token
 
         if (!token) {
             showToast("You must be logged in to join a room.", 'error')
-            return false
+            return 'retry'
         }
 
         try {
@@ -164,9 +172,16 @@ export default function CollaborationRoom() {
                 setRoomId(trimmedRoomId)
                 setSelectedFiles([])
                 setRoomRole(normalizeRole(res.role, 'viewer'))
+
+                justLeftRoomId = ''
+                rejoinResolvedRef.current = true
+                setPendingRejoinRoomId('')
                 localStorage.setItem(storedRoomIdKey, trimmedRoomId)
-                navigate({ to: '/dashboard', search: { roomId: trimmedRoomId } })
-                return true
+                const currentRoomInUrl = new URLSearchParams(window.location.search).get('roomId')
+                if (currentRoomInUrl !== trimmedRoomId) {
+                    navigate({ to: '/dashboard', search: { roomId: trimmedRoomId } })
+                }
+                return 'ok'
             } else {
                 const errorText = await response.text()
                 console.error('Server error:', errorText)
@@ -176,12 +191,13 @@ export default function CollaborationRoom() {
                 } catch {
                     showToast(errorText || "Failed to join room. Please try again.", 'error')
                 }
+                return response.status === 404 ? 'gone' : 'retry'
             }
         } catch (error) {
             console.error('Error joining room:', error)
             showToast("Network error. Please try again.", 'error')
         }
-        return false
+        return 'retry'
     }, [navigate, session?.session.token, showToast])
 
     const handleJoinRoom = async () => {
@@ -278,51 +294,88 @@ export default function CollaborationRoom() {
 
     useEffect(() => {
         const token = session?.session.token
+        if (rejoinResolvedRef.current) return
         if (!token || roomId || pendingRejoinRoomId) return
 
         const queryRoomId = new URLSearchParams(window.location.search).get('roomId')?.trim() ?? ''
         const storedRoomId = localStorage.getItem(storedRoomIdKey)?.trim() ?? ''
-        const targetRoomId = queryRoomId || storedRoomId
-
-        if (!targetRoomId) return
+        if (queryRoomId) {
+            if (queryRoomId === justLeftRoomId) {
+                setPendingRejoinRoomId(queryRoomId)
+                navigate({ to: '/dashboard', search: {} })
+                return
+            }
+            if (restoreAttempted.has(queryRoomId)) return
+            restoreAttempted.add(queryRoomId)
+            void joinRoomById(queryRoomId).then((result) => {
+                if (result === 'ok') return
+                // Bounce off the dead URL either way, but only forget the room
+                // when it's truly gone. On a retryable failure we keep the id
+                // so the rejoin prompt can offer it again.
+                restoreAttempted.delete(queryRoomId)
+                if (result === 'gone') {
+                    localStorage.removeItem(storedRoomIdKey)
+                } else {
+                    localStorage.setItem(storedRoomIdKey, queryRoomId)
+                    rejoinResolvedRef.current = false
+                    setPendingRejoinRoomId(queryRoomId)
+                }
+                navigate({ to: '/dashboard', search: {} })
+            })
+            return
+        }
+        if (!storedRoomId || rejoinResolvedRef.current) return
 
         const suppressRejoinPrompt = sessionStorage.getItem(suppressRejoinPromptKey) === '1'
         if (suppressRejoinPrompt) {
             sessionStorage.removeItem(suppressRejoinPromptKey)
             const attemptAutoRejoin = async () => {
-                const ok = await joinRoomById(targetRoomId)
-                if (!ok) {
-                    setPendingRejoinRoomId(targetRoomId)
+                const result = await joinRoomById(storedRoomId)
+                if (result === 'retry') {
+                    setPendingRejoinRoomId(storedRoomId)
+                } else if (result === 'gone') {
+                    localStorage.removeItem(storedRoomIdKey)
                 }
             }
             void attemptAutoRejoin()
             return
         }
 
-        setPendingRejoinRoomId(targetRoomId)
-    }, [joinRoomById, session?.session.token, roomId, pendingRejoinRoomId])
+        setPendingRejoinRoomId(storedRoomId)
+    }, [joinRoomById, navigate, session?.session.token, roomId, pendingRejoinRoomId])
 
     const handleRequestLeaveRoom = useCallback(() => {
         setShowLeaveConfirmModal(true)
     }, [])
+    const reviewLoadedSet = useCallback(() => {
+        const loaded = getLoadedSet()
+        clearLoadedSet()
+        if (loaded && roomRole === 'host') setSetToReview(loaded)
+    }, [roomRole])
 
     const handleConfirmLeaveRoom = useCallback(() => {
         const leavingRoomId = roomId
+        justLeftRoomId = leavingRoomId
+        rejoinResolvedRef.current = false
+        restoreAttempted.clear()
         setShowLeaveConfirmModal(false)
         setRoomId('')
         setRoomRole('')
         setSelectedFiles([])
-        setPendingRejoinRoomId('')
-        localStorage.removeItem(storedRoomIdKey)
+        setPendingRejoinRoomId(leavingRoomId)
+        localStorage.setItem(storedRoomIdKey, leavingRoomId)
         localStorage.removeItem(storedSelectedFilesKey)
         localStorage.removeItem(storedSelectedFilesRoomKey)
+        reviewLoadedSet()
         navigate({ to: '/dashboard', search: {} })
-        showToast('You left the room.', 'info')
         void leaveRoomById(leavingRoomId)
-    }, [leaveRoomById, navigate, roomId, showToast])
+    }, [leaveRoomById, navigate, roomId, reviewLoadedSet])
 
     const handleCancelRejoin = useCallback(() => {
         const staleRoomId = pendingRejoinRoomId
+        justLeftRoomId = ''
+        rejoinResolvedRef.current = true
+        restoreAttempted.clear()
         setPendingRejoinRoomId('')
         setRoomJoinId('')
         localStorage.removeItem(storedRoomIdKey)
@@ -333,33 +386,55 @@ export default function CollaborationRoom() {
     }, [leaveRoomById, navigate, pendingRejoinRoomId])
 
     const handleRoomClosed = useCallback((reason?: string) => {
+        const closedRoomId = roomId
+        const isRecoverable = reason === 'host_timeout' && roomRole === 'host'
+        justLeftRoomId = isRecoverable ? closedRoomId : ''
+        rejoinResolvedRef.current = !isRecoverable
+        restoreAttempted.clear()
         setShowLeaveConfirmModal(false)
+        reviewLoadedSet()
         setRoomId('')
         setRoomRole('')
         setSelectedFiles([])
-        setPendingRejoinRoomId('')
-        localStorage.removeItem(storedRoomIdKey)
+        setPendingRejoinRoomId(isRecoverable ? closedRoomId : '')
+        if (!isRecoverable) localStorage.removeItem(storedRoomIdKey)
         localStorage.removeItem(storedSelectedFilesKey)
         localStorage.removeItem(storedSelectedFilesRoomKey)
         navigate({ to: '/dashboard', search: {} })
         if (reason === 'host_timeout') {
-            showToast('Room closed because host did not return in time.', 'info')
+            showToast(
+                isRecoverable
+                    ? 'Room closed while you were away. You can reopen it.'
+                    : 'Room closed because host did not return in time.',
+                'info'
+            )
+            return
+        }
+        
+        if (reason === 'join_denied') {
+            showToast("The host didn't let you into that room.", 'error')
+            return
+        }
+        if (reason === 'join_no_answer') {
+            showToast("The host didn't respond to your request. Try again in a moment.", 'info')
             return
         }
         showToast('Room closed.', 'info')
-    }, [navigate, showToast])
+    }, [navigate, showToast, reviewLoadedSet, roomId, roomRole])
 
     const handleConfirmRejoin = useCallback(async () => {
         if (!pendingRejoinRoomId) return
         setIsJoiningFromPrompt(true)
-        const ok = await joinRoomById(pendingRejoinRoomId)
-        if (ok) {
+        const result = await joinRoomById(pendingRejoinRoomId)
+        if (result === 'ok') {
             setPendingRejoinRoomId('')
-        } else {
+        } else if (result === 'gone') {
             localStorage.removeItem(storedRoomIdKey)
             localStorage.removeItem(storedSelectedFilesKey)
             localStorage.removeItem(storedSelectedFilesRoomKey)
+            setPendingRejoinRoomId('')
         }
+       
         setIsJoiningFromPrompt(false)
     }, [joinRoomById, pendingRejoinRoomId])
 
@@ -483,7 +558,7 @@ export default function CollaborationRoom() {
             ) :
                 <div className="w-full px-4 flex flex-col items-center py-8 sm:py-0">
                     <div className="text-center mb-8 sm:mb-10">
-                        <h1 className="text-2xl sm:text-3xl font-bold mb-2">What's you wanna do today?</h1>
+                        <h1 className="text-2xl sm:text-3xl font-bold mb-2">What would you like to do today?</h1>
                         <p className="text-base-content/70 text-sm max-w-md">
                             Ready to lead? Open a new room to present your ideas or join a session to contribute and make your mark.
                         </p>
@@ -597,6 +672,7 @@ export default function CollaborationRoom() {
                                         onChange={(e) => setRoomJoinId(e.target.value)}
                                         onFocus={() => {
                                             if (pendingRejoinRoomId) {
+                                                justLeftRoomId = ''
                                                 setRoomJoinId('')
                                                 setPendingRejoinRoomId('')
                                                 localStorage.removeItem(storedRoomIdKey)
@@ -682,12 +758,17 @@ export default function CollaborationRoom() {
                 </div>
             </dialog>
 
-            <dialog className={`modal ${pendingRejoinRoomId ? 'modal-open' : ''}`}>
+          
+            <dialog className={`modal ${pendingRejoinRoomId && !roomId ? 'modal-open' : ''}`}>
                 <div className="modal-box w-full max-w-md mx-4 bg-base-100">
-                    <h3 className="font-bold text-lg">Rejoin room?</h3>
+                    <h3 className="font-bold text-lg">
+                        {pendingRejoinRoomId === justLeftRoomId ? 'You left the room' : 'Rejoin room?'}
+                    </h3>
                     <p className="py-3 text-sm text-base-content/70">
-                        Room <code className="px-2 py-1 rounded bg-base-200">{pendingRejoinRoomId}</code> is still in your session.
-                        Do you want to rejoin this room?
+                        Room <code className="px-2 py-1 rounded bg-base-200">{pendingRejoinRoomId}</code>
+                        {pendingRejoinRoomId === justLeftRoomId
+                            ? ' — didn’t mean to? You can go straight back in.'
+                            : ' is still in your session. Do you want to rejoin this room?'}
                     </p>
                     <div className="modal-action">
                         <button
@@ -707,6 +788,31 @@ export default function CollaborationRoom() {
                             ) : (
                                 'Rejoin'
                             )}
+                        </button>
+                    </div>
+                </div>
+            </dialog>
+
+            <dialog className={`modal ${setToReview ? 'modal-open' : ''}`}>
+                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
+                    <h3 className="font-bold text-lg">Keep this question set?</h3>
+                    <p className="py-3 text-sm text-base-content/70">
+                        You used <strong>{setToReview?.title || 'Untitled set'}</strong> in this session.
+                        Keep it for next time, or delete it now?
+                    </p>
+                    <div className="modal-action">
+                        <button
+                            className="btn btn-outline btn-error"
+                            onClick={() => {
+                                if (setToReview) deleteSet(setToReview.id)
+                                setSetToReview(null)
+                                showToast('Question set deleted.', 'info')
+                            }}
+                        >
+                            Delete
+                        </button>
+                        <button className="btn btn-primary" onClick={() => setSetToReview(null)}>
+                            Keep
                         </button>
                     </div>
                 </div>

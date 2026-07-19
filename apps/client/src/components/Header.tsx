@@ -58,12 +58,15 @@ export default function Header() {
                             </div>
                         </div>
                         <ul
-                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow border border-base-200">
-                            <li>
-                                <a className="justify-between">
-                                    Profile
-                                    <span className="badge badge-outline">{session?.user.name}</span>
-                                </a>
+                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-64 p-2 shadow border border-base-200">
+                            <li className="menu-title px-3 pt-1 pb-2">
+                                <span className="block text-[0.7rem] font-normal opacity-60">Signed in as</span>
+                                <span
+                                    className="block text-sm font-medium text-base-content truncate"
+                                    title={session?.user.name ?? undefined}
+                                >
+                                    {session?.user.name}
+                                </span>
                             </li>
                             <li>
                                 <a>

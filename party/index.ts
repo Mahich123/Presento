@@ -3,11 +3,72 @@ import { Filter } from "bad-words";
 
 const filter = new Filter();
 
+const cleanText = (text: string) => (filter.isProfane(text) ? filter.clean(text) : text);
+
+const MIN_POLL_OPTIONS = 2;
+const MAX_POLL_OPTIONS = 6;
+const MIN_POLL_DURATION_MS = 5_000;
+const MAX_POLL_DURATION_MS = 600_000;
+const MAX_QUEUE_LENGTH = 50;
+
+interface Poll {
+  id: string;
+  question: string;
+  options: { id: string; text: string }[];
+  isQuiz: boolean;
+  correctOptionId: string | null;
+  status: "open" | "closed";
+  // null = no time limit; the host closes it by hand.
+  durationMs: number | null;
+  endsAt: number | null;
+  createdAt: number;
+  // 1-based position when this came from a queued set; null for an ad-hoc question.
+  queuePosition: number | null;
+  queueTotal: number | null;
+}
+
+// Someone waiting for the host to admit them to a locked room.
+interface PendingJoin {
+  connId: string;
+  userId: string | null;
+  userName: string;
+  token: string;
+  requestedAt: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+// A validated question waiting its turn. Same shape as a create_poll payload.
+interface QueuedQuestion {
+  question: string;
+  options: string[];
+  correctIndex: number | null;
+  durationMs: number | null;
+}
+
 export default class Server implements Party.Server {
   slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
   presentationId: string | null = null;
   pdfFileId: string | null = null;
   currentSlideIndex: number = 0;
+  currentPoll: Poll | null = null;
+  // userId -> optionId. Keyed by user so a reconnect keeps their answer and
+  // one person can't stuff the ballot from two tabs.
+  pollVotes: Map<string, string> = new Map();
+  // A set of questions the host queued up ahead of time. They're fired one at a
+  // time by the host — the queue never advances on its own.
+  queue: QueuedQuestion[] = [];
+  queueIndex: number = 0;
+  pollSeq: number = 0;
+  // Host-controlled room settings. In-memory like everything else here.
+  chatEnabled: boolean = true;
+  locked: boolean = false;
+  // People knocking on a locked room, waiting for the host to let them in.
+  // Keyed by connection id. Their sockets stay open so we can push the verdict,
+  // but they are excluded from every broadcast, count and roster until admitted.
+  pendingJoins: Map<string, PendingJoin> = new Map();
+  readonly joinRequestTtlMs = 120_000;
+  pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  pollTickInterval: ReturnType<typeof setInterval> | null = null;
   hostLeftTimeout: ReturnType<typeof setTimeout> | null = null;
   hostLeftTickInterval: ReturnType<typeof setInterval> | null = null;
   hostLeftEndsAt: number | null = null;
@@ -78,10 +139,17 @@ export default class Server implements Party.Server {
         .map(({ conn, state }) => state?.userId ?? conn.id)
     );
     const count = uniqueIds.size;
-    this.room.broadcast(JSON.stringify({
+    this.broadcast(JSON.stringify({
       type: "user_count",
       count,
     }));
+    // The "8 of 12 voted" denominator moves when people come and go, so an
+    // open poll has to be re-sent alongside the count.
+    if (this.currentPoll?.status === "open") {
+      this.broadcastPollState();
+    }
+    // The host's roster changes on the same events that change the count.
+    this.broadcastParticipants();
   }
 
   async resolveUserNameFromSessionToken(token: string) {
@@ -177,21 +245,265 @@ export default class Server implements Party.Server {
     }
   }
 
+  /**
+   * Is this user already in the room right now? True while they hold a live
+   * connection, or while they're inside the disconnect grace window after a
+   * blip. Used to decide who a locked room still lets through.
+   */
+  isAlreadyInRoom(userId: string): boolean {
+    if (this.disconnectTimers.has(userId)) return true;
+    return this.getConnectionsWithState().some(({ state }) => state?.userId === userId);
+  }
+
+  /**
+   * Broadcast to admitted connections only. Anyone still waiting on the host's
+   * approval must not receive room content — chat, polls or slides.
+   */
+  broadcast(msg: string, without: string[] = []) {
+    const excluded = this.pendingJoins.size
+      ? [...without, ...this.pendingJoins.keys()]
+      : without;
+    this.room.broadcast(msg, excluded);
+  }
+
+  // Pending connections are deliberately invisible here, so every existing
+  // count, roster and per-connection loop treats them as not in the room yet.
   getConnectionsWithState() {
-    return Array.from(this.room.getConnections()).map((conn) => ({
-      conn,
-      state: (conn.state as { userId?: string; userName?: string; role?: "host" | "viewer"; token?: string; isMuted?: boolean } | null) ?? null,
-    }));
+    return Array.from(this.room.getConnections())
+      .filter((conn) => !this.pendingJoins.has(conn.id))
+      .map((conn) => ({
+        conn,
+        state: (conn.state as { userId?: string; userName?: string; role?: "host" | "viewer"; token?: string; isMuted?: boolean } | null) ?? null,
+      }));
   }
 
   hasConnectedHost() {
     return this.getConnectionsWithState().some(({ state }) => state?.role === "host");
   }
 
+  // Built from live connections rather than the DB: the host needs who's in the
+  // room *now*, with names, and conn.state already carries both.
+  buildParticipants() {
+    const byUser = new Map<string, { userId: string; userName: string; role: string; isMuted: boolean }>();
+    for (const { state } of this.getConnectionsWithState()) {
+      if (!state?.userId) continue;
+      byUser.set(state.userId, {
+        userId: state.userId,
+        userName: state.userName || "Someone",
+        role: state.role || "viewer",
+        isMuted: state.isMuted ?? false,
+      });
+    }
+    return Array.from(byUser.values()).sort(
+      (a, b) => (a.role === "host" ? -1 : b.role === "host" ? 1 : 0) || a.userName.localeCompare(b.userName),
+    );
+  }
+
+  // Host-only: the roster isn't something viewers need, or should have.
+  broadcastParticipants() {
+    const participants = this.buildParticipants();
+    const message = JSON.stringify({ type: "participants", participants });
+    for (const { conn, state } of this.getConnectionsWithState()) {
+      if (state?.role === "host") conn.send(message);
+    }
+  }
+
+  broadcastRoomSettings() {
+    this.broadcast(JSON.stringify({
+      type: "room_settings",
+      chatEnabled: this.chatEnabled,
+      locked: this.locked,
+    }));
+  }
+
+  // A connection's role can still be "viewer" for a few seconds after connect if the
+  // backend was cold-starting when we resolved it, so re-resolve once before rejecting.
+  async requireHost(sender: Party.Connection, errorMessage: string) {
+    let effectiveState = sender.state as { role?: string; token?: string; userId?: string } | null;
+    if (effectiveState?.role === "host") return effectiveState;
+
+    if (effectiveState?.token) {
+      const freshInfo = await this.resolveUserNameFromSessionToken(effectiveState.token);
+      if (freshInfo) {
+        sender.setState({
+          ...(sender.state as object),
+          userId: freshInfo.userId,
+          userName: freshInfo.userName || `User ${sender.id.slice(0, 4)}`,
+          role: freshInfo.role || effectiveState.role || "viewer",
+          isMuted: freshInfo.isMuted ?? false,
+        });
+      }
+    }
+
+    effectiveState = sender.state as { role?: string; token?: string; userId?: string } | null;
+    if (effectiveState?.role !== "host") {
+      sender.send(JSON.stringify({ type: "error", errorCode: "unauthorized_role", message: errorMessage }));
+      return null;
+    }
+    return effectiveState;
+  }
+
+  // How many people could actually vote — viewers only, since the host doesn't
+  // get a ballot. Powers the "8 of 12 voted" counter.
+  countEligibleVoters() {
+    const ids = new Set<string>();
+    for (const { conn, state } of this.getConnectionsWithState()) {
+      if (state?.role === "host") continue;
+      ids.add(state?.userId ?? conn.id);
+    }
+    return ids.size;
+  }
+
+  clearPollTimer() {
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+      this.pollTimeout = null;
+    }
+    if (this.pollTickInterval) {
+      clearInterval(this.pollTickInterval);
+      this.pollTickInterval = null;
+    }
+  }
+
+  broadcastPollTick() {
+    if (!this.currentPoll?.endsAt) return;
+    this.broadcast(JSON.stringify({
+      type: "poll_tick",
+      remainingMs: Math.max(0, this.currentPoll.endsAt - Date.now()),
+    }));
+  }
+
+  startPollTimer() {
+    this.clearPollTimer();
+    if (!this.currentPoll?.endsAt) return;
+    // The deadline is server-authoritative and ticks are pushed every second, so
+    // clients never have to trust their own clock.
+    this.pollTickInterval = setInterval(() => this.broadcastPollTick(), 1000);
+    this.pollTimeout = setTimeout(
+      () => this.closeCurrentPoll(),
+      Math.max(0, this.currentPoll.endsAt - Date.now()),
+    );
+  }
+
+  // Validate an incoming question once, so an ad-hoc question and a queued one
+  // can never diverge in what they accept.
+  normalizeQuestion(data: Record<string, unknown>): QueuedQuestion | null {
+    const question = String(data.question ?? "").trim().slice(0, 200);
+    const options = (Array.isArray(data.options) ? data.options : [])
+      .map((option: unknown) => String(option ?? "").trim().slice(0, 100))
+      .filter((option: string) => option.length > 0)
+      .slice(0, MAX_POLL_OPTIONS);
+
+    if (!question || options.length < MIN_POLL_OPTIONS) return null;
+
+    const rawCorrect = typeof data.correctIndex === "number" ? data.correctIndex : null;
+    const correctIndex =
+      rawCorrect !== null && Number.isInteger(rawCorrect) && rawCorrect >= 0 && rawCorrect < options.length
+        ? rawCorrect
+        : null;
+
+    const rawDuration = typeof data.durationMs === "number" ? data.durationMs : null;
+    const durationMs =
+      rawDuration && Number.isFinite(rawDuration) && rawDuration > 0
+        ? Math.min(MAX_POLL_DURATION_MS, Math.max(MIN_POLL_DURATION_MS, Math.round(rawDuration)))
+        : null;
+
+    return { question, options, correctIndex, durationMs };
+  }
+
+  openQuestion(
+    q: QueuedQuestion,
+    queuePosition: number | null = null,
+    queueTotal: number | null = null,
+  ) {
+    // Sequence rather than a timestamp: two questions fired in the same
+    // millisecond would otherwise collide on id.
+    const pollId = `q${++this.pollSeq}`;
+    this.clearPollTimer();
+    this.pollVotes.clear();
+    this.currentPoll = {
+      id: pollId,
+      question: cleanText(q.question),
+      options: q.options.map((text, index) => ({ id: `${pollId}-${index}`, text: cleanText(text) })),
+      isQuiz: q.correctIndex !== null,
+      correctOptionId: q.correctIndex !== null ? `${pollId}-${q.correctIndex}` : null,
+      status: "open",
+      durationMs: q.durationMs,
+      endsAt: q.durationMs ? Date.now() + q.durationMs : null,
+      createdAt: Date.now(),
+      queuePosition,
+      queueTotal,
+    };
+    this.startPollTimer();
+    this.broadcastPollState();
+  }
+
+  // The single close path — both the host's button and the expiring clock land here.
+  closeCurrentPoll() {
+    if (!this.currentPoll || this.currentPoll.status === "closed") return;
+    this.clearPollTimer();
+    this.currentPoll.status = "closed";
+    this.currentPoll.endsAt = null;
+    this.broadcastPollState();
+  }
+
+  // Every connection gets its own view of a poll: its own vote, and — while
+  // voting is open — no tallies unless it's the host. Withholding the counts
+  // here rather than in the UI is the only way viewers genuinely can't see them.
+  buildPollStateFor(userId?: string, role?: string) {
+    const base = {
+      type: "poll_state",
+      eligibleVoters: this.countEligibleVoters(),
+      queueTotal: this.queue.length,
+      queueAsked: this.queueIndex,
+      // Only the host needs the un-asked questions — sending them to viewers
+      // would hand them the questions early.
+      queuePreview:
+        role === "host"
+          ? this.queue.map((q, i) => ({ question: q.question, asked: i < this.queueIndex }))
+          : [],
+    };
+
+    if (!this.currentPoll) {
+      return { ...base, poll: null, counts: {}, countsVisible: false, totalVotes: 0, myVote: null, remainingMs: null };
+    }
+
+    const isClosed = this.currentPoll.status === "closed";
+    const countsVisible = isClosed || role === "host";
+
+    const counts: Record<string, number> = {};
+    for (const option of this.currentPoll.options) counts[option.id] = 0;
+    for (const optionId of this.pollVotes.values()) {
+      if (counts[optionId] !== undefined) counts[optionId]++;
+    }
+
+    return {
+      ...base,
+      poll: {
+        ...this.currentPoll,
+        correctOptionId: isClosed ? this.currentPoll.correctOptionId : null,
+      },
+      counts: countsVisible ? counts : {},
+      countsVisible,
+      // Always sent: how many answered is not the same as what they answered.
+      totalVotes: this.pollVotes.size,
+      myVote: userId ? this.pollVotes.get(userId) ?? null : null,
+      remainingMs: this.currentPoll.endsAt
+        ? Math.max(0, this.currentPoll.endsAt - Date.now())
+        : null,
+    };
+  }
+
+  broadcastPollState() {
+    for (const { conn, state } of this.getConnectionsWithState()) {
+      conn.send(JSON.stringify(this.buildPollStateFor(state?.userId, state?.role)));
+    }
+  }
+
   broadcastHostTimerTick() {
     if (!this.hostLeftEndsAt) return;
     const remainingMs = Math.max(0, this.hostLeftEndsAt - Date.now());
-    this.room.broadcast(
+    this.broadcast(
       JSON.stringify({
         type: "host_left_tick",
         remainingMs,
@@ -211,16 +523,18 @@ export default class Server implements Party.Server {
     }
     this.hostLeftEndsAt = null;
     if (notifyViewers) {
-      this.room.broadcast(JSON.stringify({ type: "host_returned" }));
+      this.broadcast(JSON.stringify({ type: "host_returned" }));
     }
   }
 
   async forceCloseRoom(reason: "no_participants" | "host_timeout") {
+    // Don't leave a poll tick running against a room that no longer exists.
+    this.clearPollTimer();
     const connectionWithToken = this.getConnectionsWithState().find(({ state }) => !!state?.token);
     if (connectionWithToken?.state?.token) {
       await this.closeRoomInBackend(connectionWithToken.state.token);
     }
-    this.room.broadcast(JSON.stringify({ type: "room_closed", reason }));
+    this.broadcast(JSON.stringify({ type: "room_closed", reason }));
     for (const connection of Array.from(this.room.getConnections())) {
       connection.close(4002, reason);
     }
@@ -248,7 +562,7 @@ export default class Server implements Party.Server {
     }
 
     this.hostLeftEndsAt = Date.now() + this.hostGraceMs;
-    this.room.broadcast(
+    this.broadcast(
       JSON.stringify({
         type: "host_left",
         endsAt: this.hostLeftEndsAt,
@@ -276,6 +590,130 @@ export default class Server implements Party.Server {
     }
 
     const userInfo = await this.resolveUserNameFromSessionToken(token);
+
+    // A locked room doesn't admit newcomers on its own — it asks the host.
+    // Someone already in it passes straight through: a live connection (second
+    // tab) or an unexpired disconnect grace window (a genuine reconnect), so a
+    // dropped wifi signal never needs re-approval. The host always gets in.
+    if (
+      this.locked &&
+      userInfo?.role !== "host" &&
+      !(userInfo?.userId && this.isAlreadyInRoom(userInfo.userId))
+    ) {
+      this.holdForApproval(conn, token, userInfo);
+      return;
+    }
+
+    await this.admitConnection(conn, token, userInfo);
+  }
+
+  /**
+   * Park a connection outside the room until the host decides. The socket stays
+   * open so we can push the verdict, but `pendingJoins` keeps it out of every
+   * broadcast, count and roster in the meantime.
+   */
+  holdForApproval(
+    conn: Party.Connection,
+    token: string,
+    userInfo: { userId?: string; userName?: string } | null,
+  ) {
+    const userName = userInfo?.userName || `Guest ${conn.id.slice(0, 4)}`;
+
+    const existing = this.pendingJoins.get(conn.id);
+    if (existing) clearTimeout(existing.timer);
+
+    const timer = setTimeout(() => {
+      // Don't leave someone staring at a spinner forever if the host never looks.
+      this.rejectPending(conn.id, "no_answer");
+    }, this.joinRequestTtlMs);
+
+    this.pendingJoins.set(conn.id, {
+      connId: conn.id,
+      userId: userInfo?.userId ?? null,
+      userName,
+      token,
+      requestedAt: Date.now(),
+      timer,
+    });
+
+    conn.send(JSON.stringify({
+      type: "join_pending",
+      message: "Waiting for the host to let you in.",
+      expiresAt: Date.now() + this.joinRequestTtlMs,
+    }));
+    this.broadcastJoinRequests();
+  }
+
+  buildJoinRequests() {
+    return Array.from(this.pendingJoins.values())
+      .sort((a, b) => a.requestedAt - b.requestedAt)
+      .map(({ connId, userId, userName, requestedAt }) => ({
+        connId,
+        userId,
+        userName,
+        requestedAt,
+      }));
+  }
+
+  // Host-only, like the roster — viewers have no business seeing who's knocking.
+  broadcastJoinRequests() {
+    const requests = this.buildJoinRequests();
+    const msg = JSON.stringify({ type: "join_requests", requests });
+    for (const { conn, state } of this.getConnectionsWithState()) {
+      if (state?.role === "host") conn.send(msg);
+    }
+  }
+
+  /** Turn someone away, either by the host's choice or because nobody answered. */
+  rejectPending(connId: string, reason: "denied" | "no_answer") {
+    const pending = this.pendingJoins.get(connId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingJoins.delete(connId);
+
+    const conn = Array.from(this.room.getConnections()).find((c) => c.id === connId);
+    if (conn) {
+      conn.send(JSON.stringify({
+        type: "join_denied",
+        reason,
+        message:
+          reason === "denied"
+            ? "The host didn't let you into this room."
+            : "The host didn't respond. Try again in a moment.",
+      }));
+      conn.close(4003, reason === "denied" ? "Join denied" : "No answer");
+    }
+    this.broadcastJoinRequests();
+  }
+
+  /** Let a waiting connection in, running the normal join path. */
+  async approvePending(connId: string) {
+    const pending = this.pendingJoins.get(connId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingJoins.delete(connId);
+
+    const conn = Array.from(this.room.getConnections()).find((c) => c.id === connId);
+    if (!conn) {
+      // They gave up and closed the tab while the host was deciding.
+      this.broadcastJoinRequests();
+      return;
+    }
+
+    // Re-resolve rather than trusting what we captured at knock time — role or
+    // mute state may have changed, and it may have failed transiently before.
+    const userInfo = await this.resolveUserNameFromSessionToken(pending.token);
+    conn.send(JSON.stringify({ type: "join_approved" }));
+    await this.admitConnection(conn, pending.token, userInfo);
+    this.broadcastJoinRequests();
+  }
+
+  /** The full join path, shared by a normal connect and a host approval. */
+  async admitConnection(
+    conn: Party.Connection,
+    token: string,
+    userInfo: Awaited<ReturnType<Server["resolveUserNameFromSessionToken"]>>,
+  ) {
     conn.setState({
       token,
       userId: userInfo?.userId,
@@ -354,6 +792,22 @@ export default class Server implements Party.Server {
       conn.send(JSON.stringify({ type: "mute_status", userId: userInfo.userId, isMuted: true }));
     }
 
+    if (this.currentPoll) {
+      conn.send(JSON.stringify(this.buildPollStateFor(userInfo?.userId, userInfo?.role)));
+    }
+
+    // Replay room settings to every joiner, and the roster to a joining host.
+    conn.send(JSON.stringify({
+      type: "room_settings",
+      chatEnabled: this.chatEnabled,
+      locked: this.locked,
+    }));
+    if (userInfo?.role === "host") {
+      this.broadcastParticipants();
+      // A host arriving mid-session needs to see anyone already knocking.
+      this.broadcastJoinRequests();
+    }
+
     this.broadcastUserCount();
     // Only run lifecycle check when a host connects. Running it for every viewer
     // connection causes a false host_left timer to start if the host's role
@@ -387,6 +841,11 @@ export default class Server implements Party.Server {
         });
         this.broadcastUserCount();
 
+        // Their userId only just resolved, so resend the poll with their own vote filled in.
+        if (this.currentPoll) {
+          conn.send(JSON.stringify(this.buildPollStateFor(retryInfo.userId, retryInfo.role)));
+        }
+
         // Send join notification only if it wasn't already sent during onConnect
         if (retryInfo.userId && !prevState._joinSent) {
           const sameUserConnections = this.getConnectionsWithState().filter(
@@ -414,6 +873,16 @@ export default class Server implements Party.Server {
   }
 
   async onClose(conn: Party.Connection) {
+    // Someone who gave up waiting was never admitted — drop their request and
+    // refresh the host's list. No presence or lifecycle handling applies.
+    const pending = this.pendingJoins.get(conn.id);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingJoins.delete(conn.id);
+      this.broadcastJoinRequests();
+      return;
+    }
+
     const state = (conn.state as { userId?: string; token?: string; userName?: string; role?: string } | null) ?? null;
     const sameUserStillConnected = this.getConnectionsWithState().some(
       ({ conn: connectedConn, state: connectedState }) =>
@@ -431,7 +900,7 @@ export default class Server implements Party.Server {
       const existing = this.disconnectTimers.get(userId);
       if (existing) clearTimeout(existing);
 
-      this.room.broadcast(JSON.stringify({
+      this.broadcast(JSON.stringify({
         type: "user_left",
         userId,
         userName: userName || "Someone",
@@ -490,7 +959,7 @@ export default class Server implements Party.Server {
           this.currentSlideIndex = 0;
         }
 
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             type: "slide_content",
             slides: slideContent,
@@ -508,7 +977,7 @@ export default class Server implements Party.Server {
           this.currentSlideIndex = 0;
         }
 
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             type: "pdf_content",
             fileId: data.fileId
@@ -516,7 +985,7 @@ export default class Server implements Party.Server {
         );
       } else if (data.type === "slide_change") {
         this.currentSlideIndex = data.slideIndex;
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             type: "slide_change",
             slideIndex: data.slideIndex,
@@ -524,7 +993,15 @@ export default class Server implements Party.Server {
           [sender.id]
         );
       } else if (data.type === "chat_message") {
-        const state = sender.state as { userId?: string; userName?: string; isMuted?: boolean } | null;
+        const state = sender.state as { userId?: string; userName?: string; isMuted?: boolean; role?: string } | null;
+        // Host can always post — turning chat off silences the room, not themselves.
+        if (!this.chatEnabled && state?.role !== "host") {
+          sender.send(JSON.stringify({
+            type: "error",
+            message: "The host has turned off chat."
+          }));
+          return;
+        }
         if (state?.isMuted) {
           sender.send(JSON.stringify({
             type: "error",
@@ -536,7 +1013,7 @@ export default class Server implements Party.Server {
         const raw = String(data.message ?? "");
         const hasProfanity = filter.isProfane(raw);
         const cleanMessage = hasProfanity ? filter.clean(raw) : raw;
-        this.room.broadcast(
+        this.broadcast(
           JSON.stringify({
             type: "chat_message",
             id: `${sender.id}-${Date.now()}`,
@@ -556,7 +1033,7 @@ export default class Server implements Party.Server {
       } else if (data.type === "cursor_move" || data.type === "cursor_hide") {
         const senderState = sender.state as { role?: string; token?: string } | null;
         if (senderState?.role !== "host") return;
-        this.room.broadcast(JSON.stringify(data), [sender.id]);
+        this.broadcast(JSON.stringify(data), [sender.id]);
       } else if (data.type === "mute_user") {
         const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
         let effectiveState = senderState;
@@ -596,11 +1073,119 @@ export default class Server implements Party.Server {
         }
 
         // Broadcast mute status to all connections so host and target see the update
-        this.room.broadcast(JSON.stringify({
+        this.broadcast(JSON.stringify({
           type: "mute_status",
           userId: targetUserId,
           isMuted: newMuteState,
         }));
+        this.broadcastParticipants();
+      } else if (data.type === "create_poll") {
+        const hostState = await this.requireHost(sender, "Only the host can start a poll.");
+        if (!hostState) return;
+
+        const normalized = this.normalizeQuestion(data);
+        if (!normalized) {
+          sender.send(JSON.stringify({
+            type: "error",
+            message: `A question needs text and at least ${MIN_POLL_OPTIONS} answers.`,
+          }));
+          return;
+        }
+        // Asking ad-hoc leaves any loaded queue untouched.
+        this.openQuestion(normalized);
+      } else if (data.type === "poll_vote") {
+        if (!this.currentPoll || this.currentPoll.status !== "open") return;
+
+        const state = sender.state as { userId?: string; isMuted?: boolean } | null;
+        if (state?.isMuted) {
+          sender.send(JSON.stringify({
+            type: "error",
+            message: "You are muted by the host and cannot answer.",
+          }));
+          return;
+        }
+
+        // Without a resolved userId we can't dedupe answers, so drop it rather
+        // than let one unresolved connection answer repeatedly.
+        const voterId = state?.userId;
+        if (!voterId) return;
+
+        const optionId = String(data.optionId ?? "");
+        if (!this.currentPoll.options.some((option) => option.id === optionId)) return;
+
+        this.pollVotes.set(voterId, optionId);
+        this.broadcastPollState();
+      } else if (data.type === "close_poll") {
+        const hostState = await this.requireHost(sender, "Only the host can close a poll.");
+        if (!hostState) return;
+        this.closeCurrentPoll();
+      } else if (data.type === "clear_poll") {
+        const hostState = await this.requireHost(sender, "Only the host can clear a question.");
+        if (!hostState) return;
+        this.clearPollTimer();
+        this.currentPoll = null;
+        this.pollVotes.clear();
+        // The queue outlives any single question — clearing one doesn't discard the set.
+        this.broadcastPollState();
+      } else if (data.type === "load_queue") {
+        const hostState = await this.requireHost(sender, "Only the host can load a question set.");
+        if (!hostState) return;
+        const incoming = Array.isArray(data.questions) ? data.questions : [];
+        // Drop anything malformed rather than rejecting the whole set — a half-finished
+        // draft in the host's browser shouldn't block the good questions.
+        this.queue = incoming
+          .slice(0, MAX_QUEUE_LENGTH)
+          .map((q: Record<string, unknown>) => this.normalizeQuestion(q))
+          .filter((q: QueuedQuestion | null): q is QueuedQuestion => q !== null);
+        this.queueIndex = 0;
+        if (this.queue.length === 0) {
+          sender.send(JSON.stringify({ type: "error", message: "That set has no usable questions." }));
+        }
+        this.broadcastPollState();
+      } else if (data.type === "ask_next") {
+        const hostState = await this.requireHost(sender, "Only the host can ask the next question.");
+        if (!hostState) return;
+        if (this.queueIndex >= this.queue.length) return;
+        const next = this.queue[this.queueIndex];
+        this.queueIndex++;
+        // Replaces whatever is on screen, so the host can go reveal -> next in one tap.
+        this.openQuestion(next, this.queueIndex, this.queue.length);
+      } else if (data.type === "clear_queue") {
+        const hostState = await this.requireHost(sender, "Only the host can clear the question set.");
+        if (!hostState) return;
+        this.queue = [];
+        this.queueIndex = 0;
+        this.broadcastPollState();
+      } else if (data.type === "set_chat_enabled") {
+        const hostState = await this.requireHost(sender, "Only the host can change chat settings.");
+        if (!hostState) return;
+        this.chatEnabled = data.enabled !== false;
+        this.broadcastRoomSettings();
+      } else if (data.type === "set_locked") {
+        const hostState = await this.requireHost(sender, "Only the host can lock the room.");
+        if (!hostState) return;
+        this.locked = data.locked === true;
+        this.broadcastRoomSettings();
+        // Unlocking answers everyone still knocking — no reason to make them
+        // wait for individual approval once the door is open again.
+        if (!this.locked && this.pendingJoins.size) {
+          for (const connId of Array.from(this.pendingJoins.keys())) {
+            await this.approvePending(connId);
+          }
+        }
+      } else if (data.type === "approve_join") {
+        const hostState = await this.requireHost(sender, "Only the host can admit people.");
+        if (!hostState) return;
+        if (typeof data.connId === "string") await this.approvePending(data.connId);
+      } else if (data.type === "deny_join") {
+        const hostState = await this.requireHost(sender, "Only the host can admit people.");
+        if (!hostState) return;
+        if (typeof data.connId === "string") this.rejectPending(data.connId, "denied");
+      } else if (data.type === "request_participants") {
+        const hostState = await this.requireHost(sender, "Only the host can view participants.");
+        if (!hostState) return;
+        sender.send(JSON.stringify({ type: "participants", participants: this.buildParticipants() }));
+        sender.send(JSON.stringify({ type: "join_requests", requests: this.buildJoinRequests() }));
       } else if (data.type === "verify_role") {
         // Client requests an immediate role re-resolution (e.g. host just enabled laser pointer
         // but their role may still be "viewer" because background resolve hasn't fired yet).

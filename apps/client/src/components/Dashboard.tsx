@@ -1,12 +1,15 @@
 import Header from "./Header"
 import userAuth from "../utils/userSession"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import CollaborationRoom from "./CollaborationRoom";
 
 export default function Dashboard() {
   const { session, isPending } = userAuth()
   const navigate = useNavigate()
+ 
+  const hasAuthed = useRef(false)
+  if (session) hasAuthed.current = true
 
   useEffect(() => {
     if (!session && !isPending) {
@@ -14,7 +17,7 @@ export default function Dashboard() {
     }
   }, [session, isPending, navigate]);
 
-  if (isPending) {
+  if (isPending && !hasAuthed.current) {
     return <div>Loading...</div>
   }
 
