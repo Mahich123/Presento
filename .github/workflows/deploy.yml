@@ -10,9 +10,7 @@ on:
 jobs:
   # ── Backend → Cloudflare Workers ────────────────────────────────
   deploy-server:
-    # Only deploy for a release tagged exactly "production" (or a manual run).
-    # A "staging" (or any other) tag is ignored.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,9 +26,7 @@ jobs:
 
   # ── Frontend → Cloudflare Pages ─────────────────────────────────
   deploy-client:
-    # Only deploy for a release tagged exactly "production" (or a manual run).
-    # A "staging" (or any other) tag is ignored.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,9 +61,7 @@ jobs:
 
   # ── Realtime → PartyKit ─────────────────────────────────────────
   deploy-partykit:
-    # Only deploy for a release tagged exactly "production" (or a manual run).
-    # A "staging" (or any other) tag is ignored.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name == 'production'
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
