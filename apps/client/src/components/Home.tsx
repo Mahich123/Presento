@@ -1,12 +1,45 @@
 import Header from "./Header"
+import HeroRoomPeek from "./HeroRoomPeek"
 import { Link } from "@tanstack/react-router"
-import { Users, Globe, RefreshCw } from "lucide-react"
+import { Users, Globe, RefreshCw, Sparkles, BarChart3, FileText, KeyRound, ShieldCheck, MousePointer2 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import userAuth from "../utils/userSession"
 import { useRef } from "react"
+import type { MouseEvent as ReactMouseEvent, MouseEventHandler } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 
 const GLOW_REST_Y = 114
+
+// The hero's headline features. Order matters: the two we lead on sit first.
+const HERO_CHIPS: { label: string; Icon: LucideIcon }[] = [
+    { label: "Quizzes written from your deck", Icon: Sparkles },
+    { label: "Live polls with timers", Icon: BarChart3 },
+    { label: "PDF, PowerPoint & Google Slides", Icon: FileText },
+    { label: "Join with a code — no account", Icon: KeyRound },
+    { label: "Mute, lock & approve joins", Icon: ShieldCheck },
+    { label: "Shared laser pointer", Icon: MousePointer2 },
+]
+
+function FloatChip({ label, Icon, onMouseEnter, onMouseLeave }: {
+    label: string
+    Icon: LucideIcon
+    onMouseEnter: MouseEventHandler<HTMLDivElement>
+    onMouseLeave: MouseEventHandler<HTMLDivElement>
+}) {
+    return (
+        <div className="float-chip relative will-change-transform" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+            {/* ripple pushed outward when the chip is pressed into the surface */}
+            <span aria-hidden className="chip-ring pointer-events-none absolute -inset-px rounded-full border border-[#BB8856]/60 opacity-0"></span>
+            {/* reflection on the water — widens and softens as the chip rises */}
+            <span aria-hidden className="chip-shadow pointer-events-none absolute inset-x-4 -bottom-2.5 h-2 rounded-[50%] bg-[#BB8856]/25 dark:bg-black/50 blur-[6px]"></span>
+            <div className="chip-body relative flex items-center gap-2 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
+                <Icon className="w-4 h-4 shrink-0 text-[#BB8856]" />
+                {label}
+            </div>
+        </div>
+    )
+}
 
 export default function Home() {
     const { session } = userAuth()
@@ -15,7 +48,7 @@ export default function Home() {
     const heroRef = useRef<HTMLDivElement>(null)
     const glowRef = useRef<HTMLDivElement>(null)
 
-    useGSAP(() => {
+    const { contextSafe } = useGSAP(() => {
         const hero = heroRef.current
         const glow = glowRef.current
         if (!hero || !glow) return
@@ -41,8 +74,49 @@ export default function Home() {
         }
 
         window.addEventListener("mousemove", handleMove, { passive: true })
+
+        // Each chip bobs on its own phase (staggered start, per-index duration) so the
+        // group never pulses in unison. The reflection widens as the chip rises — that
+        // counter-motion is what reads as "floating" rather than "sliding up and down".
+        gsap.to(".float-chip", {
+            y: (i) => -(7 + (i % 3) * 2),
+            rotation: (i) => (i % 2 === 0 ? 1.3 : -1.1),
+            duration: (i) => 2.4 + (i % 4) * 0.3,
+            ease: "sine.inOut",
+            yoyo: true,
+            repeat: -1,
+            // Deterministic: chip i and shadow i must share a delay or they desync.
+            stagger: 0.45,
+        })
+        gsap.to(".chip-shadow", {
+            scaleX: 1.18,
+            opacity: 0.35,
+            duration: (i) => 2.4 + (i % 4) * 0.3,
+            ease: "sine.inOut",
+            yoyo: true,
+            repeat: -1,
+            // Deterministic: chip i and shadow i must share a delay or they desync.
+            stagger: 0.45,
+        })
+
         return () => window.removeEventListener("mousemove", handleMove)
     }, { scope: heroRef })
+
+    // Hover presses the chip into the surface and pushes a ripple out from it.
+    const handleChipEnter = contextSafe((event: ReactMouseEvent<HTMLDivElement>) => {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+        const chip = event.currentTarget
+        gsap.to(chip.querySelector(".chip-body"), { y: 4, scale: 0.98, duration: 0.3, ease: "power2.out" })
+        gsap.fromTo(
+            chip.querySelector(".chip-ring"),
+            { scale: 0.9, opacity: 0.55 },
+            { scale: 1.85, opacity: 0, duration: 0.85, ease: "power2.out" }
+        )
+    })
+
+    const handleChipLeave = contextSafe((event: ReactMouseEvent<HTMLDivElement>) => {
+        gsap.to(event.currentTarget.querySelector(".chip-body"), { y: 0, scale: 1, duration: 0.45, ease: "power2.out" })
+    })
 
     return (
         <div className="min-h-screen bg-white dark:bg-[#0B0A09]">
@@ -70,29 +144,19 @@ export default function Home() {
                     </a>
                 </div>
 
-                <div className="relative flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 mb-14">
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
-                        <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        Works with PDF & PowerPoint
-                    </div>
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
-                        <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        Real-time slide sync
-                    </div>
-                    <div className="flex items-center gap-1.5 rounded-full border border-[#E7D9C7] dark:border-[#3A322B] bg-white/70 dark:bg-white/5 backdrop-blur px-4 py-2 text-xs sm:text-sm font-medium text-[#6B5D52] dark:text-[#C9BEB4] shadow-sm">
-                        <svg className="w-4 h-4 text-[#BB8856]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        Students join with a room code
-                    </div>
+                <div className="relative flex flex-wrap items-center justify-center gap-x-2.5 gap-y-5 sm:gap-x-3 sm:gap-y-6 max-w-3xl mb-14">
+                    {HERO_CHIPS.map((chip) => (
+                        <FloatChip
+                            key={chip.label}
+                            label={chip.label}
+                            Icon={chip.Icon}
+                            onMouseEnter={handleChipEnter}
+                            onMouseLeave={handleChipLeave}
+                        />
+                    ))}
                 </div>
 
-                <div className="relative group w-full max-w-5xl">
-                    <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-[#BB8856] to-[#D4A574] rounded-2xl blur opacity-25 group-hover:opacity-40 transition duration-500"></div>
-                    <img
-                        src="/slideimg.jpg"
-                        alt="Presentation slide"
-                        className="relative w-full h-auto rounded-2xl shadow-2xl ring-1 ring-black/5 transition-transform duration-500 group-hover:scale-[1.02]"
-                    />
-                </div>
+                <HeroRoomPeek />
             </div>
             <div id="how-it-works" className="bg-[#0F0D0B] px-4 py-16 sm:px-8 sm:py-20 md:px-10 lg:px-16 lg:py-28">
                 <div className="max-w-7xl mx-auto w-full">
