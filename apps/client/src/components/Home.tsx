@@ -1,7 +1,7 @@
 import Header from "./Header"
 import HeroRoomPeek from "./HeroRoomPeek"
 import { Link } from "@tanstack/react-router"
-import { Users, Globe, RefreshCw, Sparkles, BarChart3, FileText, KeyRound, ShieldCheck, MousePointer2 } from "lucide-react"
+import { Globe, RefreshCw, Sparkles, BarChart3, FileText, KeyRound, ShieldCheck, MousePointer2 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import userAuth from "../utils/userSession"
 import { useRef } from "react"
@@ -16,9 +16,42 @@ const HERO_CHIPS: { label: string; Icon: LucideIcon }[] = [
     { label: "Quizzes written from your deck", Icon: Sparkles },
     { label: "Live polls with timers", Icon: BarChart3 },
     { label: "PDF, PowerPoint & Google Slides", Icon: FileText },
-    { label: "Join with a code — no account", Icon: KeyRound },
+    { label: "Join with a five-character code", Icon: KeyRound },
     { label: "Mute, lock & approve joins", Icon: ShieldCheck },
     { label: "Shared laser pointer", Icon: MousePointer2 },
+]
+
+const WHY_CARDS: { title: string; body: string; Icon: LucideIcon }[] = [
+    {
+        title: "AI Quizzes, No Subscription",
+        body: "Presento writes questions straight from your slides using your own API key. The free OpenRouter option needs no card at all.",
+        Icon: Sparkles,
+    },
+    {
+        title: "Live Polls with Timers",
+        body: "Push a question onto the slide and watch answers land in real time. The clock runs on the server, so nobody's laptop can cheat it.",
+        Icon: BarChart3,
+    },
+    {
+        title: "You Run the Room",
+        body: "Mute anyone, lock the door so new arrivals need your approval, or switch chat off entirely when it stops helping.",
+        Icon: ShieldCheck,
+    },
+    {
+        title: "Point at Anything",
+        body: "Turn on the laser and every student sees exactly where you're pointing, on their own screen.",
+        Icon: MousePointer2,
+    },
+    {
+        title: "Nobody Loses Their Place",
+        body: "Dropped Wi-Fi doesn't mean starting over. Students rejoin on the slide you're actually on, with their mute state intact.",
+        Icon: RefreshCw,
+    },
+    {
+        title: "Nothing to Install",
+        body: "Students join through the browser on whatever device they brought. No app, no download.",
+        Icon: Globe,
+    },
 ]
 
 function FloatChip({ label, Icon, onMouseEnter, onMouseLeave }: {
@@ -169,15 +202,15 @@ export default function Home() {
 
                         <div className="bg-[#1A1714] rounded-2xl p-8 lg:p-10 ring-1 ring-white/5">
                             <span className="text-[#D4A96A] text-4xl font-bold">01</span>
-                            <h3 className="text-white text-lg font-bold mt-4 mb-2">Upload Your Slides</h3>
-                            <p className="text-[#888] text-sm leading-relaxed">Import any PDF or PowerPoint. Presento keeps your slides exactly as you made them.</p>
+                            <h3 className="text-white text-lg font-bold mt-4 mb-2">Pick Your Deck</h3>
+                            <p className="text-[#888] text-sm leading-relaxed">Choose a Google Slides deck, PowerPoint, or PDF from your Drive. PowerPoint converts automatically — your slides look exactly as you made them.</p>
                         </div>
 
 
                         <div className="bg-[#C49A5A] rounded-2xl p-8 lg:p-10 ring-1 ring-black/5">
                             <span className="text-white text-4xl font-bold">02</span>
                             <h3 className="text-white text-lg font-bold mt-4 mb-2">Share a Room Code</h3>
-                            <p className="text-[#f5e8d4] text-sm leading-relaxed">Create an account, share a room code, students join with a single code, no downloads, no friction.</p>
+                            <p className="text-[#f5e8d4] text-sm leading-relaxed">Share your five-character room code. Students open it in any browser — no downloads, no install.</p>
                         </div>
 
                         <div className="bg-[#1A1714] rounded-2xl p-8 lg:p-10 ring-1 ring-white/5">
@@ -197,29 +230,15 @@ export default function Home() {
                     </h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-
-                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
-                            <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
-                                <RefreshCw className="w-5 h-5 text-white" />
+                        {WHY_CARDS.map(({ title, body, Icon }) => (
+                            <div key={title} className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
+                                <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
+                                    <Icon className="w-5 h-5 text-white" />
+                                </div>
+                                <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">{title}</h3>
+                                <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">{body}</p>
                             </div>
-                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">Live Sync</h3>
-                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Every slide change you make is instantly visible to all students in the room, no refresh needed.</p>
-                        </div>
-
-                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
-                            <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
-                                <Users className="w-5 h-5 text-white" />
-                            </div>
-                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">Role-Based Views</h3>
-                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Teachers control the flow. Students follow along. Each side sees exactly what they need to.</p>
-                        </div>
-                        <div className="bg-[#EFE3D0] dark:bg-[#1A1714] rounded-2xl p-8 ring-1 ring-black/5 dark:ring-white/5">
-                            <div className="w-10 h-10 bg-[#C49A5A] rounded-lg mb-6 flex items-center justify-center">
-                                <Globe className="w-5 h-5 text-white" />
-                            </div>
-                            <h3 className="text-[#1A1714] dark:text-[#ECE7E2] text-base font-bold mb-2">No App Required</h3>
-                            <p className="text-[#7A6A5A] dark:text-[#9C918B] text-sm leading-relaxed">Students join through the browser. Nothing to install.</p>
-                        </div>
+                        ))}
                     </div>
                 </div>
             </div>
@@ -234,7 +253,7 @@ export default function Home() {
                         <p className="text-[#66635F] text-sm mt-8 lg:mt-0">© 2026 Presento. All rights reserved.</p>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-10 sm:gap-14 lg:gap-16 pt-6 md:pt-0">
+                    <div className="flex gap-10 sm:gap-14 lg:gap-16 pt-6 md:pt-0">
                         <div>
                             <h4 className="text-[#B88A54] text-sm font-semibold mb-4">Quick Links</h4>
                             <div className="flex flex-col gap-2.5 text-sm">

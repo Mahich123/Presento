@@ -172,7 +172,7 @@ export default function HeroRoomPeek() {
                         <div className="p-2 border-t border-gray-200 shrink-0">
                             <div className="flex gap-1.5 items-center">
                                 <div className="flex-1 min-w-0 rounded-lg border border-gray-300 px-2.5 py-1.5 text-[11px] text-gray-400">Type a message...</div>
-                                <div className="shrink-0 rounded-lg bg-blue-600 text-white text-[10px] font-medium px-2.5 py-1.5">Send</div>
+                                <div className="shrink-0 rounded-lg bg-[#BB8856] text-white text-[10px] font-medium px-2.5 py-1.5">Send</div>
                             </div>
                         </div>
                     </div>
