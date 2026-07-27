@@ -1,6 +1,7 @@
 import { Ban, Check, Copy, Hand, Lock, MessageSquareOff, Users } from "lucide-react";
 import { useState } from "react";
 import type { JoinRequest } from "./RoomContent";
+import RoomQR from "./RoomQR";
 
 export interface Participant {
   userId: string;
@@ -15,6 +16,7 @@ interface RoomSettingsProps {
   chatEnabled: boolean;
   locked: boolean;
   currentUserId?: string;
+  isHost: boolean;
   joinRequests: JoinRequest[];
   onToggleChat: (enabled: boolean) => void;
   onToggleLock: (locked: boolean) => void;
@@ -57,6 +59,7 @@ export default function RoomSettings({
   chatEnabled,
   locked,
   currentUserId,
+  isHost,
   joinRequests,
   onToggleChat,
   onToggleLock,
@@ -88,6 +91,7 @@ export default function RoomSettings({
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
+        {isHost && <RoomQR roomId={roomId} />}
       </div>
 
       {/* Controls */}

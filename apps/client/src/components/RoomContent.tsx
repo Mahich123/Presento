@@ -1233,7 +1233,7 @@ function RoomContent({
             flex flex-col bg-white
             fixed bottom-0 left-0 right-0 z-50 rounded-t-2xl h-dvh shadow-2xl
             transition-transform duration-300 ease-in-out
-            lg:static lg:w-80 lg:h-auto lg:max-h-none lg:rounded-lg lg:border lg:border-gray-200 lg:shadow-sm lg:z-auto lg:translate-y-0
+            lg:static lg:w-80 lg:h-auto lg:max-h-none lg:rounded-lg lg:shadow-sm lg:z-auto lg:translate-y-0
             ${chatOpen ? 'translate-y-0' : 'translate-y-full'}
             ${chatCollapsed ? 'lg:hidden' : ''}
           `}>
@@ -1311,6 +1311,7 @@ function RoomContent({
                 chatEnabled={chatEnabled}
                 locked={roomLocked}
                 currentUserId={currentUserId}
+                isHost={roomRole === 'host'}
                 joinRequests={joinRequests}
                 onToggleChat={handleToggleChat}
                 onToggleLock={handleToggleLock}

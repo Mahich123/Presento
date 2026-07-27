@@ -25,6 +25,7 @@
     "partysocket": "^1.1.6",
     "pdfjs-dist": "^6.1.200",
     "porp-types": "^0.0.1-security",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-google-picker": "^0.1.0",
