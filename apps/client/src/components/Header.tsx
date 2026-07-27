@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "@tanstack/react-router"
 import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
 import GoogleIcon from "../icons/GoogleIcon"
@@ -44,7 +45,7 @@ export default function Header() {
     return (
         <div className="sticky top-0 z-20 navbar bg-base-100 shadow-sm px-4 sm:px-8 lg:px-16 border-b border-base-200">
             <div className="flex-1">
-                <a className="text-xl font-extrabold">Presento</a>
+                <Link to="/" className="text-xl font-extrabold">Presento</Link>
             </div>
             <div className="flex-none flex items-center gap-3">
                 <ThemeToggle />
@@ -88,7 +89,7 @@ export default function Header() {
                     </div>
                 ) : (
                     <a href="/signup">
-                        <button className="bg-black hover:bg-gray-800 text-white font-bold py-3 px-8 rounded-lg transition-colors duration-300 cursor-pointer">
+                        <button className="bg-[#BB8856] hover:bg-[#A87744] text-white font-bold py-3 px-8 rounded-lg transition-colors duration-300 cursor-pointer">
                             Get Started
                         </button>
                     </a>

@@ -1400,7 +1400,7 @@ function RoomContent({
                   <button
                     onClick={handleSendChat}
                     disabled={!chatInput.trim()}
-                    className="btn btn-sm shrink-0 bg-blue-600 hover:bg-blue-700 text-white border-0 disabled:bg-blue-300 disabled:text-white"
+                    className="btn btn-sm shrink-0 bg-[#BB8856] hover:bg-[#A87744] text-white border-0 disabled:bg-[#DCC3A9] disabled:text-white"
                   >
                     Send
                   </button>
