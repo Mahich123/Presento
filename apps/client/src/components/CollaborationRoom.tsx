@@ -4,6 +4,7 @@ import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
 import { nanoid } from "nanoid"
 import RoomContent from "./RoomContent"
+import RoomQR from "./RoomQR"
 import Toast from "./Toast"
 import { useNavigate } from "@tanstack/react-router"
 import { clearLoadedSet, deleteSet, getLoadedSet, type QuestionSet } from "../utils/questionSets"
@@ -710,7 +711,8 @@ export default function CollaborationRoom() {
 
                     <div className="space-y-4 mb-6">
                         <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="px-2 py-1 rounded break-all bg-base-200">{roomId}</code></p>
-                        <p className="text-xs sm:text-sm text-base-content/60">Share this Room ID with your collaborators to join the session.</p>
+                        <p className="text-xs sm:text-sm text-base-content/60">Share this Room ID with your collaborators, or let them scan the code below.</p>
+                        {roomId && <RoomQR roomId={roomId} tone="theme" />}
                     </div>
 
                     <div className="divider">Add Files to Collaborate</div>

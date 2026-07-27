@@ -16,7 +16,7 @@ const HERO_CHIPS: { label: string; Icon: LucideIcon }[] = [
     { label: "Quizzes written from your deck", Icon: Sparkles },
     { label: "Live polls with timers", Icon: BarChart3 },
     { label: "PDF, PowerPoint & Google Slides", Icon: FileText },
-    { label: "Join with a five-character code", Icon: KeyRound },
+    { label: "Join with a five character code", Icon: KeyRound },
     { label: "Mute, lock & approve joins", Icon: ShieldCheck },
     { label: "Shared laser pointer", Icon: MousePointer2 },
 ]
@@ -203,14 +203,14 @@ export default function Home() {
                         <div className="bg-[#1A1714] rounded-2xl p-8 lg:p-10 ring-1 ring-white/5">
                             <span className="text-[#D4A96A] text-4xl font-bold">01</span>
                             <h3 className="text-white text-lg font-bold mt-4 mb-2">Pick Your Deck</h3>
-                            <p className="text-[#888] text-sm leading-relaxed">Choose a Google Slides deck, PowerPoint, or PDF from your Drive. PowerPoint converts automatically — your slides look exactly as you made them.</p>
+                            <p className="text-[#888] text-sm leading-relaxed">Choose a Google Slides deck, PowerPoint, or PDF from your Drive. PowerPoint converts automatically your slides look exactly as you made them.</p>
                         </div>
 
 
                         <div className="bg-[#C49A5A] rounded-2xl p-8 lg:p-10 ring-1 ring-black/5">
                             <span className="text-white text-4xl font-bold">02</span>
                             <h3 className="text-white text-lg font-bold mt-4 mb-2">Share a Room Code</h3>
-                            <p className="text-[#f5e8d4] text-sm leading-relaxed">Share your five-character room code. Students open it in any browser — no downloads, no install.</p>
+                            <p className="text-[#f5e8d4] text-sm leading-relaxed">Share your five character room code. Students open it in any browser no downloads, no install.</p>
                         </div>
 
                         <div className="bg-[#1A1714] rounded-2xl p-8 lg:p-10 ring-1 ring-white/5">

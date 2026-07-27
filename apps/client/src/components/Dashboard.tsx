@@ -13,7 +13,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!session && !isPending) {
-      navigate({ to: "/" });
+      const roomId = new URLSearchParams(window.location.search).get("roomId")?.trim()
+      navigate(roomId ? { to: "/signup", search: { roomId } } : { to: "/" });
     }
   }, [session, isPending, navigate]);
 
