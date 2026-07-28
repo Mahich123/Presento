@@ -8,24 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ── Backend → Cloudflare Workers ────────────────────────────────
-  deploy-server:
-    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/server
-          command: deploy
-
-  # ── Frontend → Cloudflare Pages ─────────────────────────────────
-  deploy-client:
+  deploy-app:
     if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
@@ -52,12 +35,13 @@ jobs:
           VITE_CLIENT_URL: ${{ vars.VITE_CLIENT_URL }}
           VITE_USE_MOCK_API: "false"
           VITE_DEVELOPER_KEY: ${{ secrets.VITE_DEVELOPER_KEY }}
-      - name: Deploy Pages
+      - name: Deploy Worker (API + client assets)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/client/dist --project-name=presento --branch=main
+          workingDirectory: apps/server
+          command: deploy
 
   # ── Realtime → PartyKit ─────────────────────────────────────────
   deploy-partykit:
