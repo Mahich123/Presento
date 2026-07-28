@@ -49,7 +49,7 @@ export function createAuth(env: ENV) {
     : ["http://localhost:5173"],
   advanced: {
     defaultCookieAttributes: {
-      sameSite: "none",
+      sameSite: "lax",
       secure: true,
     },
   },

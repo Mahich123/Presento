@@ -3,9 +3,24 @@ main = "src/workers.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+# This Worker serves the built client as well as the API, so the whole app is
+# one origin. That is deliberate: when the SPA lived on presento.pages.dev and
+# the API on *.workers.dev, those were different *sites* (both parent domains
+# are on the Public Suffix List), so every auth cookie was a third-party cookie.
+# Browsers dropped the OAuth state cookie and Better Auth failed each login with
+# `state_mismatch`.
+[assets]
+directory = "../client/dist"
+not_found_handling = "single-page-application"
+# Without this the SPA fallback would answer /api/* with index.html. "/api" is
+# listed separately because the wildcard does not cover the bare path.
+run_worker_first = ["/api", "/api/*"]
+
 [vars]
 # Non-sensitive vars — safe to commit.
 # Secrets (tokens, client secrets, DB credentials) go in: wrangler secret put <NAME>
 BACKEND_BASE_URL = "https://presento-server.presento.workers.dev"
-TRUSTED_ORIGINS = "https://presento.pages.dev"
+# Same origin as the app now. Only actually used by the CORS middleware in local
+# dev, where the client (:5173) and server (:4002) are on different ports.
+TRUSTED_ORIGINS = "https://presento-server.presento.workers.dev"
 PARTYKIT_SERVER_URL = "https://my-partykit-app.mahich123.partykit.dev"
