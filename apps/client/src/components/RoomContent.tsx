@@ -636,15 +636,17 @@ function RoomContent({
   }, [roomRole, laserEnabled, sendCursorHide])
 
   const toggleLaser = useCallback(() => {
-    setLaserEnabled(prev => {
-      if (!prev) {
-        // Ask the server to re-verify our role in case it wasn't resolved yet
-        wsRef.current?.send(JSON.stringify({ type: 'verify_role' }))
-      }
-      if (prev) sendCursorHide()
-      return !prev
-    })
-  }, [sendCursorHide])
+    // React may run a state updater more than once (StrictMode does in dev), so the
+    // socket sends have to happen out here — inside the updater they fired twice.
+    const next = !laserEnabled
+    if (next) {
+      // Ask the server to re-verify our role in case it wasn't resolved yet
+      wsRef.current?.send(JSON.stringify({ type: 'verify_role' }))
+    } else {
+      sendCursorHide()
+    }
+    setLaserEnabled(next)
+  }, [laserEnabled, sendCursorHide])
 
   const handleLeaveRoom = useCallback(() => {
     onRequestLeave()
@@ -667,6 +669,7 @@ function RoomContent({
     if (!slideContent.length || !activePresentationId || useMockApi) return
 
     const cache = slideCacheRef.current
+    let cancelled = false
 
     // Save to room_slide table (upsert — only meaningful data, runs once per load)
     client.api["room-slide"].$post({
@@ -681,21 +684,32 @@ function RoomContent({
           param: { presentationId: activePresentationId, pageObjectId: slide.pageId },
           query: { roomId },
         })
-        if (res.ok) {
-          const blob = await res.blob()
-          cache.set(slide.pageId, URL.createObjectURL(blob))
-          setCachedPageIds(prev => new Set([...prev, slide.pageId]))
+        if (!res.ok) return
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        // These requests outlive the effect. Once it's torn down the unmount cleanup
+        // has already revoked the cache, so anything minted afterwards would leak —
+        // revoke it here instead of caching it (and skip the setState on a dead tree).
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
         }
+        cache.set(slide.pageId, url)
+        setCachedPageIds(prev => new Set([...prev, slide.pageId]))
       } catch (err) {
-        console.error(`Failed to pre-fetch slide ${slide.pageId}:`, err)
+        if (!cancelled) console.error(`Failed to pre-fetch slide ${slide.pageId}:`, err)
       }
     })
-  }, [slideContent, activePresentationId])
+
+    return () => { cancelled = true }
+  }, [slideContent, activePresentationId, roomId])
 
   // Clean up blob URLs on unmount
   useEffect(() => {
+    const cache = slideCacheRef.current
     return () => {
-      slideCacheRef.current.forEach(url => URL.revokeObjectURL(url))
+      cache.forEach(url => URL.revokeObjectURL(url))
+      cache.clear()
     }
   }, [])
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Link } from "@tanstack/react-router"
+import { Link, useLocation } from "@tanstack/react-router"
 import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
 import GoogleIcon from "../icons/GoogleIcon"
@@ -9,6 +9,10 @@ import ThemeToggle from "./ThemeToggle"
 export default function Header() {
 
     const { session, signOut } = userAuth()
+
+    // On /signup the CTA would point at the page you're already on, so the header
+    // there is just the way back plus the theme toggle.
+    const onSignupPage = useLocation({ select: (location) => location.pathname === "/signup" })
 
     const [accounts, setAccounts] = useState<{ providerId: string }[]>([])
 
@@ -20,34 +24,51 @@ export default function Header() {
         }
     }
 
-    const linkedAccounts = async () => {
-        const currentUserId = session?.user.id
-
-        if (!currentUserId) {
-            return "user not available"
-        }
-
-        const passUserId = await client.api.getallAccounts[':userId'].$get({
-            param: { userId: currentUserId }
-        })
-
-        const data = await passUserId.json()
-        setAccounts(data)
-    }
+    // The session resolves asynchronously, so this has to re-run once the user id
+    // lands — with an empty dep array the first (signed-out) pass was the only one
+    // and the list stayed empty forever.
+    const userId = session?.user.id
 
     useEffect(() => {
-        if (session?.user.id) {
-            linkedAccounts()
+        if (!userId) {
+            setAccounts([])
+            return
         }
-    }, [])
+
+        let cancelled = false
+
+        const loadLinkedAccounts = async () => {
+            try {
+                const res = await client.api.getallAccounts[':userId'].$get({
+                    param: { userId }
+                })
+                if (!res.ok) {
+                    console.warn('Failed to load linked accounts:', res.status)
+                    return
+                }
+                const data = await res.json()
+                // A stale response from a previous user must not overwrite the new one.
+                if (cancelled) return
+                if (Array.isArray(data)) setAccounts(data)
+            } catch (error) {
+                if (!cancelled) console.error('Failed to load linked accounts:', error)
+            }
+        }
+
+        loadLinkedAccounts()
+
+        return () => { cancelled = true }
+    }, [userId])
 
 
     return (
-        <div className="sticky top-0 z-20 navbar bg-base-100 shadow-sm px-4 sm:px-8 lg:px-16 border-b border-base-200">
-            <div className="flex-1">
-                <Link to="/" className="text-xl font-extrabold">Presento</Link>
+        <header className="sticky top-0 z-20 navbar bg-base-100 dark:bg-[#141210] shadow-sm px-4 sm:px-8 lg:px-16 border-b border-base-200 dark:border-[#3A322B]">
+            <div className="flex-1 min-w-0">
+                <Link to="/" className="inline-flex items-center min-h-11 px-1 -mx-1 text-xl font-extrabold rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BB8856] focus-visible:ring-offset-2 focus-visible:ring-offset-base-100">Presento</Link>
             </div>
-            <div className="flex-none flex items-center gap-3">
+            {/* shrink-0 + min-w-0 above: the right cluster used to push 24px of
+                horizontal overflow at 320px instead of letting the wordmark give way. */}
+            <div className="flex-none shrink-0 flex items-center gap-2 sm:gap-3">
                 <ThemeToggle />
                 {session ? (
                     <div className="dropdown dropdown-end">
@@ -87,14 +108,15 @@ export default function Header() {
                             <li><button onClick={handleSignOut}>Logout</button></li>
                         </ul>
                     </div>
-                ) : (
-                    <a href="/signup">
-                        <button className="bg-[#BB8856] hover:bg-[#A87744] text-white font-bold py-3 px-8 rounded-lg transition-colors duration-300 cursor-pointer">
-                            Get Started
-                        </button>
-                    </a>
+                ) : onSignupPage ? null : (
+                    <Link
+                        to="/signup"
+                        className="bg-[#96683A] hover:bg-[#7E5730] text-white font-bold py-3 px-8 rounded-lg transition-colors duration-300 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BB8856] focus-visible:ring-offset-2 focus-visible:ring-offset-base-100"
+                    >
+                        Get Started
+                    </Link>
                 )}
             </div>
-        </div>
+        </header>
     )
 }

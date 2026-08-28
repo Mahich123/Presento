@@ -11,6 +11,7 @@ ProductionFeature.md
 .wrangler/
 .vercel
 .claude/
+.impeccable/
 
 # Bun is the package manager — don't let npm/yarn/pnpm lockfiles creep back in
 package-lock.json
