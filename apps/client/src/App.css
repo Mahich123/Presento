@@ -20,6 +20,22 @@
   }
 }
 
+/* Tailwind's animate-pulse keeps looping under a reduced-motion preference — the
+   GSAP work is all guarded, so these CSS loops were the only thing still moving. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
+}
+
+/* The hero chips and footer links are same-page anchors. Smooth only when the
+   visitor hasn't asked for less motion — they still get the instant jump. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
 body {
   margin: 0;
   font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
