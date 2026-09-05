@@ -8,7 +8,7 @@ type Tone = "light" | "theme"
 
 const TRIGGER_TONE: Record<Tone, { border: string; title: string; hint: string }> = {
   light: { border: "border-gray-200", title: "text-gray-800", hint: "text-gray-400" },
-  theme: { border: "border-base-300", title: "text-base-content", hint: "text-base-content/60" },
+  theme: { border: "border-base-300", title: "text-base-content", hint: "text-base-content/70" },
 }
 
 const prefersReducedMotion = () =>

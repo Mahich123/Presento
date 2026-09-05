@@ -67,6 +67,11 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       port: 5173,
+      // The backend's CORS allowlist and Better Auth's trustedOrigins are both
+      // pinned to :5173. Letting Vite drift to the next free port when 5173 is
+      // taken turns every auth call into an opaque CORS failure that surfaces as
+      // "we couldn't reach Google". Fail loudly on the port instead.
+      strictPort: true,
       allowedHosts: true,
       proxy: {
         "/api": {

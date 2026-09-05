@@ -19,7 +19,15 @@ export default function Dashboard() {
   }, [session, isPending, navigate]);
 
   if (isPending && !hasAuthed.current) {
-    return <div>Loading...</div>
+    return (
+      <div className="flex h-screen flex-col bg-base-200">
+        <Header />
+        <div className="flex flex-1 items-center justify-center">
+          <span className="loading loading-spinner text-base-content/40" />
+          <span className="sr-only">Loading your dashboard</span>
+        </div>
+      </div>
+    )
   }
 
   return (

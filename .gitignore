@@ -12,6 +12,7 @@ ProductionFeature.md
 .vercel
 .claude/
 .impeccable/
+.playwright-mcp/
 
 # Bun is the package manager — don't let npm/yarn/pnpm lockfiles creep back in
 package-lock.json

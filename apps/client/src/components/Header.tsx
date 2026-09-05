@@ -62,7 +62,7 @@ export default function Header() {
 
 
     return (
-        <header className="sticky top-0 z-20 navbar bg-base-100 dark:bg-[#141210] shadow-sm px-4 sm:px-8 lg:px-16 border-b border-base-200 dark:border-[#3A322B]">
+        <header className="sticky top-0 z-20 navbar bg-base-100 px-4 sm:px-8 lg:px-16 border-b border-base-300">
             <div className="flex-1 min-w-0">
                 <Link to="/" className="inline-flex items-center min-h-11 px-1 -mx-1 text-xl font-extrabold rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#BB8856] focus-visible:ring-offset-2 focus-visible:ring-offset-base-100">Presento</Link>
             </div>
@@ -72,15 +72,24 @@ export default function Header() {
                 <ThemeToggle />
                 {session ? (
                     <div className="dropdown dropdown-end">
-                        <div tabIndex={0} role="button" className="btn btn-ghost btn-circle avatar">
-                            <div className="w-10 rounded-full">
-                                <img
-                                    alt="User avatar"
-                                    src={session?.user.image ?? undefined} />
+                        <div
+                            tabIndex={0}
+                            role="button"
+                            aria-label="Account menu"
+                            className="btn btn-ghost btn-circle avatar"
+                        >
+                            <div className="w-10 rounded-full ring-1 ring-base-300">
+                                {session.user.image ? (
+                                    <img alt="" src={session.user.image} />
+                                ) : (
+                                    <span className="flex h-full w-full items-center justify-center bg-base-200 text-sm font-bold text-base-content/70">
+                                        {(session.user.name ?? '?').trim().charAt(0).toUpperCase()}
+                                    </span>
+                                )}
                             </div>
                         </div>
                         <ul
-                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-64 p-2 shadow border border-base-200">
+                            className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-64 p-2 shadow-lg border border-base-300">
                             <li className="menu-title px-3 pt-1 pb-2">
                                 <span className="block text-[0.7rem] font-normal opacity-60">Signed in as</span>
                                 <span
@@ -90,22 +99,26 @@ export default function Header() {
                                     {session?.user.name}
                                 </span>
                             </li>
-                            <li>
-                                <a>
-                                    Linked
-                                    {accounts.length === 0 && <span className="text-xs">None</span>}
-                                    <div className="flex items-center  justify-end gap-x-2 mt-1">
-                                        {accounts.map((acc, idx) => (
-                                            <span key={idx} className="inline-flex items-center ">
-                                                {acc.providerId === 'github' && <GithubIcon size={24} />}
-                                                {acc.providerId === 'google' && <GoogleIcon size={24} />}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </a>
+                            <li className="pointer-events-none px-3 py-2">
+                                <div className="flex items-center justify-between gap-3 hover:bg-transparent">
+                                    <span className="text-base-content/60">Linked accounts</span>
+                                    {accounts.length === 0 ? (
+                                        <span className="text-base-content/40">None</span>
+                                    ) : (
+                                        <span className="flex items-center gap-x-2">
+                                            {accounts.map((acc, idx) => (
+                                                <span key={idx} className="inline-flex items-center">
+                                                    {acc.providerId === 'github' && <GithubIcon size={20} />}
+                                                    {acc.providerId === 'google' && <GoogleIcon size={20} />}
+                                                </span>
+                                            ))}
+                                        </span>
+                                    )}
+                                </div>
                             </li>
-                            <li><a>Settings</a></li>
-                            <li><button onClick={handleSignOut}>Logout</button></li>
+                            <li className="mt-1 border-t border-base-300 pt-1">
+                                <button onClick={handleSignOut}>Sign out</button>
+                            </li>
                         </ul>
                     </div>
                 ) : onSignupPage ? null : (
