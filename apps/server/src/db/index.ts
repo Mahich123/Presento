@@ -10,3 +10,6 @@ export function createDb(env: ENV) {
   });
   return drizzle(client);
 }
+
+/** The handle every route module and helper passes around. */
+export type Db = ReturnType<typeof createDb>;

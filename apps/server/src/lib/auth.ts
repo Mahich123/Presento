@@ -40,6 +40,10 @@ export function createAuth(env: ENV) {
     accountLinking: {
       enabled: true,
       trustedProviders: ["github", "google"],
+      // Google is linked purely for Drive/Slides access, not identity — a host
+      // signed in via GitHub will routinely connect a Google account under a
+      // different email, so the two are not required to match.
+      allowDifferentEmails: true,
     },
   },
   baseURL: env.BACKEND_BASE_URL!,

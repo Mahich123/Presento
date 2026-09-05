@@ -76,7 +76,6 @@ export default function CollaborationRoom() {
     const [showModal, setShowModal] = useState(false)
     const [roomJoinId, setRoomJoinId] = useState<string>("")
     const [isCreatingRoom, setIsCreatingRoom] = useState(false)
-    const [selectedCard, setSelectedCard] = useState<'create' | 'join' | null>(null)
     const [pendingRejoinRoomId, setPendingRejoinRoomId] = useState<string>("")
     const [isJoiningFromPrompt, setIsJoiningFromPrompt] = useState(false)
     const [showLeaveConfirmModal, setShowLeaveConfirmModal] = useState(false)
@@ -101,7 +100,10 @@ export default function CollaborationRoom() {
 
     const handleConnect = async () => {
         sessionStorage.setItem(suppressRejoinPromptKey, '1')
-        return await authClient.signIn.social({
+        // linkSocial attaches Google to the signed-in user (GitHub or otherwise)
+        // without switching the session. signIn.social would run a normal login,
+        // which resolves to whatever user the Google identity belongs to instead.
+        return await authClient.linkSocial({
             provider: 'google',
             callbackURL: `${window.location.origin}/dashboard`
         })
@@ -112,7 +114,7 @@ export default function CollaborationRoom() {
         const token = session?.session.token
 
         if (!token) {
-            alert("You must be logged in to create a room.")
+            showToast("Sign in first to open a room.", 'error')
             return
         }
 
@@ -138,11 +140,11 @@ export default function CollaborationRoom() {
             } else {
                 const errorText = await response.text()
                 console.error('Server error:', errorText)
-                alert("Failed to create room. Please try again.")
+                showToast("Could not open the room. Try again.", 'error')
             }
         } catch (error) {
             console.error('Error creating room:', error)
-            alert("Network error. Please try again.")
+            showToast("No connection. Check your network and try again.", 'error')
         } finally {
             setIsCreatingRoom(false)
         }
@@ -460,10 +462,21 @@ export default function CollaborationRoom() {
 
 
         if (!getToken.ok) {
-            // A transient refresh failure shouldn't drop the connected state and force
-            // a full reconnect (which loses the room). Let the user simply retry.
             console.error('Failed to get fresh token from server');
-            showToast("Couldn't refresh Google access. Please try again.", 'error')
+            if (getToken.status === 401) {
+                // The refresh token itself is dead (revoked, or rejected by Google
+                // as unauthorized_client) — no amount of retrying will fix this.
+                // Drop the connected state so "Connect Google Drive" reappears;
+                // handleConnect silently rejoins this room after the OAuth
+                // round-trip, so this doesn't lose the room like it used to.
+                setHasGoogle(false)
+                setAccessToken('')
+                showToast("Google connection expired. Click Connect Google Drive to relink.", 'error')
+            } else {
+                // A transient refresh failure shouldn't drop the connected state and
+                // force a full reconnect. Let the user simply retry.
+                showToast("Couldn't refresh Google access. Please try again.", 'error')
+            }
             return;
         }
 
@@ -541,7 +554,7 @@ export default function CollaborationRoom() {
 
 
     return (
-        <div className={`flex flex-col h-full bg-base-200 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center px-4'}`}>
+        <div className={`flex flex-col h-full bg-base-200 relative ${(selectedFiles.length > 0 || roomId) ? '' : 'items-center justify-center overflow-y-auto px-5 bg-[radial-gradient(115%_70%_at_50%_-8%,var(--color-base-100),transparent_62%)]'}`}>
 
             {(selectedFiles.length > 0 || roomId) ? (
                 <RoomContent
@@ -554,249 +567,197 @@ export default function CollaborationRoom() {
                     onRequestLeave={handleRequestLeaveRoom}
                     onRoomClosed={handleRoomClosed}
                     onOpenPicker={openPicker}
-                    pickerReady={hasGoogle && pickerApiLoaded}
+                    onConnectGoogle={handleConnect}
+                    hasGoogle={hasGoogle}
+                    pickerReady={pickerApiLoaded}
                 />
             ) :
-                <div className="w-full px-4 flex flex-col items-center py-8 sm:py-0">
-                    <div className="text-center mb-8 sm:mb-10">
-                        <h1 className="text-2xl sm:text-3xl font-bold mb-2">What would you like to do today?</h1>
-                        <p className="text-base-content/70 text-sm max-w-md">
-                            Ready to lead? Open a new room to present your ideas or join a session to contribute and make your mark.
+                <div className="w-full max-w-lg px-1 py-10 sm:py-4">
+
+                    {/* The room you were in used to arrive as a modal over an empty
+                        page — an interruption before you had done anything. It is a
+                        row you can act on or ignore. */}
+                    {pendingRejoinRoomId ? (
+                        <div className="mb-10 rounded-2xl border border-primary/35 bg-primary/[0.06] p-4 sm:p-5">
+                            <p className="text-sm font-semibold">
+                                {pendingRejoinRoomId === justLeftRoomId
+                                    ? 'You left this room'
+                                    : 'You still have a room open'}
+                            </p>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                                <span className="font-mono text-lg font-bold uppercase tracking-[0.2em] text-secondary dark:text-primary">
+                                    {pendingRejoinRoomId}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                    <button
+                                        className="btn btn-ghost btn-sm"
+                                        onClick={handleCancelRejoin}
+                                        disabled={isJoiningFromPrompt}
+                                    >
+                                        Dismiss
+                                    </button>
+                                    <button
+                                        className="btn btn-primary btn-sm"
+                                        onClick={handleConfirmRejoin}
+                                        disabled={isJoiningFromPrompt}
+                                    >
+                                        {isJoiningFromPrompt
+                                            ? <span className="loading loading-spinner loading-xs" />
+                                            : 'Rejoin'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
+
+                    <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-balance">
+                        Ready when you are.
+                    </h1>
+                    <p className="mt-3 text-[0.95rem] leading-relaxed text-base-content/70 text-pretty">
+                        Open a room and share the code with the class, or join one you
+                        were given.
+                    </p>
+
+                    {/* Opening a room used to take two clicks: one to expand a card,
+                        one to confirm. It is the whole reason the page exists. */}
+                    <div className="mt-9">
+                        <button
+                            onClick={handleCreateRoom}
+                            disabled={isCreatingRoom}
+                            className="btn btn-primary h-14 min-h-14 w-full gap-2 text-base font-semibold"
+                        >
+                            {isCreatingRoom ? (
+                                <>
+                                    <span className="loading loading-spinner loading-sm" />
+                                    Opening the room…
+                                </>
+                            ) : (
+                                'Open a room'
+                            )}
+                        </button>
+                        <p className="mt-3 text-sm text-base-content/70">
+                            You host. A five-character code appears the moment it opens.
                         </p>
                     </div>
 
-                    <div className="w-full max-w-5xl flex flex-col sm:flex-row justify-center items-stretch sm:items-start gap-4 sm:gap-0">
-
-
-                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'join'
-                                ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
-                                : selectedCard === 'create'
-                                    ? 'w-full sm:w-96 max-h-128 opacity-100'
-                                    : 'w-full sm:w-72 max-h-128 opacity-100'
-                            }`}>
-                            <div
-                                className={`w-full bg-base-100 rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'create'
-                                        ? 'border-primary/30 shadow-xl ring-2 ring-primary/20'
-                                        : 'border-base-300 shadow-sm hover:shadow-md hover:border-primary/30 cursor-pointer'
-                                    }`}
-                                onClick={() => selectedCard === null && setSelectedCard('create')}
-                            >
-                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'create' ? 'bg-primary/20' : 'bg-primary/10'}`}>
-                                    <svg className="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                    </svg>
-                                </div>
-                                <h2 className="text-base sm:text-lg font-bold mb-2">Create Room</h2>
-                                <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'create'
-                                        ? 'max-h-24 opacity-100 mt-1 delay-200'
-                                        : 'max-h-0 opacity-0'
-                                    }`}>
-                                    <p className="text-base-content/60 text-sm leading-relaxed">
-                                        Start a new session. A unique room ID will be generated, share it with others so they can join.
-                                    </p>
-                                </div>
-
-
-                                <div className={`w-full flex flex-col gap-3 overflow-hidden transition-all duration-300 ${selectedCard === 'create'
-                                        ? 'max-h-40 opacity-100 mt-7 delay-300'
-                                        : 'max-h-0 opacity-0 mt-0 pointer-events-none'
-                                    }`}>
-                                    <button
-                                        onClick={handleCreateRoom}
-                                        disabled={isCreatingRoom}
-                                        className="w-full btn btn-primary rounded-xl"
-                                    >
-                                        {isCreatingRoom ? (
-                                            <span className="loading loading-spinner loading-sm"></span>
-                                        ) : (
-                                            'Create Room'
-                                        )}
-                                    </button>
-                                    <button
-                                        onClick={() => setSelectedCard(null)}
-                                        className="w-full btn btn-ghost btn-sm rounded-xl"
-                                    >
-                                        ← Back
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-
-                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard !== null ? 'max-h-0 sm:w-0 opacity-0' : 'max-h-16 sm:max-h-none w-full sm:w-14 opacity-100'
-                            }`}>
-                            <div className="w-full sm:w-14 flex flex-row sm:flex-col items-center justify-center gap-2 py-1 sm:py-10">
-                                <div className="h-px w-full sm:w-px sm:h-10 bg-base-300"></div>
-                                <span className="text-xs font-medium bg-base-200 px-2 py-1 rounded-full">OR</span>
-                                <div className="h-px w-full sm:w-px sm:h-10 bg-base-300"></div>
-                            </div>
-                        </div>
-
-
-                        <div className={`transition-all duration-500 ease-in-out overflow-hidden shrink-0 ${selectedCard === 'create'
-                                ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none sm:max-h-none sm:w-0 sm:translate-y-0'
-                                : selectedCard === 'join'
-                                    ? 'w-full sm:w-96 max-h-136 opacity-100'
-                                    : 'w-full sm:w-72 max-h-136 opacity-100'
-                            }`}>
-                            <div
-                                className={`w-full bg-base-100 rounded-2xl border p-5 sm:p-8 flex flex-col items-center text-center transition-all duration-500 ${selectedCard === 'join'
-                                        ? 'border-success/30 shadow-xl ring-2 ring-success/20'
-                                        : 'border-base-300 shadow-sm hover:shadow-md hover:border-success/30 cursor-pointer'
-                                    }`}
-                                onClick={() => selectedCard === null && setSelectedCard('join')}
-                            >
-                                <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center mb-4 sm:mb-5 shrink-0 transition-colors duration-300 ${selectedCard === 'join' ? 'bg-success/20' : 'bg-success/10'}`}>
-                                    <svg className="w-7 h-7 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                                    </svg>
-                                </div>
-                                <h2 className="text-base sm:text-lg font-bold mb-2">Join Room</h2>
-                                <div className={`overflow-hidden transition-all duration-300 ${selectedCard === 'join'
-                                        ? 'max-h-24 opacity-100 mt-1 delay-200'
-                                        : 'max-h-0 opacity-0'
-                                    }`}>
-                                    <p className="text-base-content/60 text-sm leading-relaxed">
-                                        Have a room ID? Enter it below to jump into an ongoing session as a viewer.
-                                    </p>
-                                </div>
-
-
-                                <div className={`w-full flex flex-col gap-3 overflow-hidden transition-all duration-300 ${selectedCard === 'join'
-                                        ? 'max-h-48 opacity-100 mt-7 delay-300'
-                                        : 'max-h-0 opacity-0 mt-0 pointer-events-none'
-                                    }`}>
-                                    <input
-                                        type="text"
-                                        placeholder="Enter room ID"
-                                        value={roomJoinId}
-                                        onChange={(e) => setRoomJoinId(e.target.value)}
-                                        onFocus={() => {
-                                            if (pendingRejoinRoomId) {
-                                                justLeftRoomId = ''
-                                                setRoomJoinId('')
-                                                setPendingRejoinRoomId('')
-                                                localStorage.removeItem(storedRoomIdKey)
-                                                localStorage.removeItem(storedSelectedFilesKey)
-                                                localStorage.removeItem(storedSelectedFilesRoomKey)
-                                            }
-                                        }}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
-                                        className="input input-bordered w-full rounded-xl text-sm outline-none"
-                                    />
-                                    <button
-                                        onClick={handleJoinRoom}
-                                        disabled={!roomJoinId.trim()}
-                                        className="w-full btn btn-success rounded-xl disabled:opacity-50"
-                                    >
-                                        Join Room
-                                    </button>
-                                    <button
-                                        onClick={() => setSelectedCard(null)}
-                                        className="w-full btn btn-ghost btn-sm rounded-xl"
-                                    >
-                                        ← Back
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
+                    <div className="my-9 flex items-center gap-4">
+                        <span className="h-px flex-1 bg-base-300" />
+                        <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-base-content/65">
+                            or
+                        </span>
+                        <span className="h-px flex-1 bg-base-300" />
                     </div>
+
+                    <form
+                        onSubmit={(e) => { e.preventDefault(); handleJoinRoom() }}
+                    >
+                        <label
+                            htmlFor="room-code"
+                            className="block text-sm font-semibold"
+                        >
+                            Join with a code
+                        </label>
+                        <p className="mt-1 text-sm text-base-content/70">
+                            The five characters the host read out.
+                        </p>
+                        <div className="mt-3 flex gap-2">
+                            <input
+                                id="room-code"
+                                type="text"
+                                inputMode="text"
+                                autoComplete="off"
+                                autoCapitalize="characters"
+                                spellCheck={false}
+                                maxLength={5}
+                                placeholder="ABCDE"
+                                value={roomJoinId}
+                                onChange={(e) => setRoomJoinId(e.target.value.trim())}
+                                className="input input-bordered h-12 min-h-12 flex-1 bg-base-100 font-mono text-lg font-bold uppercase tracking-[0.28em] placeholder:font-normal placeholder:tracking-[0.28em] placeholder:text-base-content/30"
+                            />
+                            <button
+                                type="submit"
+                                className="btn btn-outline btn-primary h-12 min-h-12 px-7 font-semibold"
+                            >
+                                Join
+                            </button>
+                        </div>
+                    </form>
                 </div>
             }
 
             <dialog className={`modal ${showModal ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-sm sm:max-w-xl md:max-w-2xl mx-4 bg-base-100">
-                    <h3 className="font-bold text-base sm:text-lg mb-4">Room Created Successfully! 🎉</h3>
+                <div className="modal-box mx-4 w-full max-w-md border border-base-300 bg-base-100">
+                    <h3 className="text-lg font-bold">Your room is open</h3>
+                    <p className="mt-1 text-sm text-base-content/70">
+                        Read the code out, or let the class scan it.
+                    </p>
 
-                    <div className="space-y-4 mb-6">
-                        <p className="text-sm sm:text-base"><strong>Room ID:</strong> <code className="px-2 py-1 rounded break-all bg-base-200">{roomId}</code></p>
-                        <p className="text-xs sm:text-sm text-base-content/60">Share this Room ID with your collaborators, or let them scan the code below.</p>
-                        {roomId && <RoomQR roomId={roomId} tone="theme" />}
+                    {/* The code is the only thing anyone in the room needs from this
+                        screen, so it is the largest thing on it. */}
+                    <div className="mt-5 rounded-2xl border border-base-300 bg-base-200 p-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span className="font-mono text-3xl font-bold uppercase tracking-[0.22em] text-secondary dark:text-primary">
+                                {roomId}
+                            </span>
+                            <button
+                                className="btn btn-sm btn-outline btn-primary h-10 min-h-10"
+                                onClick={() => {
+                                    navigator.clipboard.writeText(roomId)
+                                    showToast('Room code copied.', 'success')
+                                }}
+                            >
+                                Copy
+                            </button>
+                        </div>
+                        {roomId ? (
+                            <div className="mt-5 flex justify-center border-t border-base-300 pt-5">
+                                <RoomQR roomId={roomId} tone="theme" />
+                            </div>
+                        ) : null}
                     </div>
 
-                    <div className="divider">Add Files to Collaborate</div>
+                    <div className="mt-6 border-t border-base-300 pt-5">
+                        <p className="text-sm font-semibold">Bring in your deck</p>
+                        {(!hasGoogle || !accessToken) ? (
+                            <>
+                                <p className="mt-1 text-sm text-base-content/70">
+                                    Presento only reads the file you pick — it never edits
+                                    or creates anything in your Drive.
+                                </p>
+                                <button
+                                    onClick={handleConnect}
+                                    className="btn btn-primary mt-4 h-11 min-h-11 w-full"
+                                >
+                                    Connect Google Drive
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <p className="mt-1 text-sm text-base-content/70">
+                                    Google Slides, PowerPoint, or a PDF.
+                                </p>
+                                <button
+                                    onClick={openPicker}
+                                    disabled={!pickerApiLoaded}
+                                    className="btn btn-primary mt-4 h-11 min-h-11 w-full"
+                                >
+                                    {pickerApiLoaded ? 'Choose a deck from Drive' : 'Loading Drive…'}
+                                </button>
+                            </>
+                        )}
+                    </div>
 
-                    {(!hasGoogle || !accessToken) ? (
-                        <div className="text-center py-4">
-                            <p className="text-base-content/70 mb-4 text-sm sm:text-base">
-                                Connect your Google account to access Drive files for collaboration
-                            </p>
-                            <button
-                                onClick={handleConnect}
-                                className="btn btn-primary w-full sm:w-auto"
-                            >
-                                Connect Google Drive
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="text-center py-4">
-                            <div className="bg-success/20 text-success font-medium p-3 rounded mb-4 inline-block text-sm sm:text-base">
-                                ✅ Google Drive Connected
-                            </div>
-                            <br />
-                            <button
-                                onClick={openPicker}
-                                disabled={!pickerApiLoaded}
-                                className="btn btn-primary w-full sm:w-auto"
-                            >
-                                {pickerApiLoaded ? '📁 Choose from Drive' : '⏳ Loading...'}
-                            </button>
-                        </div>
-                    )}
-
-                    <div className="modal-action flex-col sm:flex-row gap-2">
-                        <button
-                            className="btn btn-primary w-full sm:w-auto"
-                            onClick={() => {
-                                navigator.clipboard.writeText(roomId)
-                                alert('Room ID copied to clipboard!')
-                            }}
-                        >
-                            Copy Room ID
+                    <div className="modal-action">
+                        <button className="btn btn-ghost h-11 min-h-11" onClick={() => setShowModal(false)}>
+                            Not now
                         </button>
-                        <button className="btn w-full sm:w-auto" onClick={() => setShowModal(false)}>Close</button>
                     </div>
                 </div>
             </dialog>
 
           
-            <dialog className={`modal ${pendingRejoinRoomId && !roomId ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
-                    <h3 className="font-bold text-lg">
-                        {pendingRejoinRoomId === justLeftRoomId ? 'You left the room' : 'Rejoin room?'}
-                    </h3>
-                    <p className="py-3 text-sm text-base-content/70">
-                        Room <code className="px-2 py-1 rounded bg-base-200">{pendingRejoinRoomId}</code>
-                        {pendingRejoinRoomId === justLeftRoomId
-                            ? ' — didn’t mean to? You can go straight back in.'
-                            : ' is still in your session. Do you want to rejoin this room?'}
-                    </p>
-                    <div className="modal-action">
-                        <button
-                            className="btn"
-                            onClick={handleCancelRejoin}
-                            disabled={isJoiningFromPrompt}
-                        >
-                            No
-                        </button>
-                        <button
-                            className="btn btn-primary"
-                            onClick={handleConfirmRejoin}
-                            disabled={isJoiningFromPrompt}
-                        >
-                            {isJoiningFromPrompt ? (
-                                <span className="loading loading-spinner loading-sm"></span>
-                            ) : (
-                                'Rejoin'
-                            )}
-                        </button>
-                    </div>
-                </div>
-            </dialog>
-
             <dialog className={`modal ${setToReview ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
+                <div className="modal-box w-full max-w-md mx-4 border border-base-300 bg-base-100">
                     <h3 className="font-bold text-lg">Keep this question set?</h3>
                     <p className="py-3 text-sm text-base-content/70">
                         You used <strong>{setToReview?.title || 'Untitled set'}</strong> in this session.
@@ -804,7 +765,7 @@ export default function CollaborationRoom() {
                     </p>
                     <div className="modal-action">
                         <button
-                            className="btn btn-outline btn-error"
+                            className="btn btn-outline btn-error h-11 min-h-11"
                             onClick={() => {
                                 if (setToReview) deleteSet(setToReview.id)
                                 setSetToReview(null)
@@ -813,7 +774,7 @@ export default function CollaborationRoom() {
                         >
                             Delete
                         </button>
-                        <button className="btn btn-primary" onClick={() => setSetToReview(null)}>
+                        <button className="btn btn-primary h-11 min-h-11" onClick={() => setSetToReview(null)}>
                             Keep
                         </button>
                     </div>
@@ -821,20 +782,20 @@ export default function CollaborationRoom() {
             </dialog>
 
             <dialog className={`modal ${showLeaveConfirmModal ? 'modal-open' : ''}`}>
-                <div className="modal-box w-full max-w-md mx-4 bg-base-100">
+                <div className="modal-box w-full max-w-md mx-4 border border-base-300 bg-base-100">
                     <h3 className="font-bold text-lg">Leave room?</h3>
                     <p className="py-3 text-sm text-base-content/70">
                         Are you sure you want to leave this room?
                     </p>
                     <div className="modal-action">
                         <button
-                            className="btn"
+                            className="btn h-11 min-h-11"
                             onClick={() => setShowLeaveConfirmModal(false)}
                         >
                             Cancel
                         </button>
                         <button
-                            className="btn btn-error"
+                            className="btn btn-error h-11 min-h-11"
                             onClick={handleConfirmLeaveRoom}
                         >
                             Leave

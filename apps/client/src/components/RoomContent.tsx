@@ -59,6 +59,8 @@ interface RoomContentProps {
   onRequestLeave: () => void;
   onRoomClosed: (reason?: string) => void;
   onOpenPicker?: () => void;
+  onConnectGoogle?: () => void;
+  hasGoogle?: boolean;
   pickerReady?: boolean;
 }
 
@@ -273,6 +275,8 @@ function RoomContent({
   onRequestLeave,
   onRoomClosed,
   onOpenPicker,
+  onConnectGoogle,
+  hasGoogle = false,
   pickerReady = false
 }: RoomContentProps) {
 
@@ -1346,13 +1350,23 @@ function RoomContent({
             <>
             {roomRole === 'host' && (
             <div className="px-3 sm:px-4 py-2 border-b border-gray-100 shrink-0 ">
-              <button
-                className="btn btn-sm btn-outline w-full dark:bg-gray-800 dark:text-gray-100"
-                onClick={onOpenPicker}
-                disabled={!onOpenPicker || !pickerReady}
-              >
-                {pickerReady ? "Choose from Drive" : "Drive Picker Loading..."}
-              </button>
+              {hasGoogle ? (
+                <button
+                  className="btn btn-sm btn-outline w-full dark:bg-gray-800 dark:text-gray-100"
+                  onClick={onOpenPicker}
+                  disabled={!onOpenPicker || !pickerReady}
+                >
+                  {pickerReady ? "Choose from Drive" : "Drive Picker Loading..."}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-sm btn-primary w-full"
+                  onClick={onConnectGoogle}
+                  disabled={!onConnectGoogle}
+                >
+                  Connect Google Drive
+                </button>
+              )}
             </div>
             )}
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 min-h-0">

@@ -1,9 +1,128 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
 @import "tailwindcss";
+/* No built-in themes: the two blocks below are the only light and dark this
+   product has, and they declare their own default/prefersdark. Shipping
+   daisyUI's stock light as well left its indigo primary in the bundle, one
+   cascade reorder away from overriding the brand. */
 @plugin "daisyui" {
-  themes: light --default, dark;
+  themes: false;
 }
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   The Warm Auditorium, as daisyUI tokens.
+
+   Every in-app surface (dashboard, room, polls, modals) is built on the
+   semantic tokens, so until these themes existed the whole authenticated
+   product rendered in daisyUI's stock palette — indigo primary, mint success,
+   cool blue-grey bases — while the marketing pages used the real bronze/paper
+   hexes. These two blocks are what make the two halves one product.
+
+   Ordering note: base-100 is the RAISED surface here (cards, header, modals)
+   and base-200 is the field beneath it, in BOTH themes. That inverts daisyUI's
+   dark-mode convention on purpose, because that is how the app already uses
+   them, and it keeps a card lifting off the page in light and dark alike.
+--------------------------------------------------------------------------- */
+
+@plugin "daisyui/theme" {
+  name: "light";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+
+  /* Paper: warm, matte, never pure white. */
+  --color-base-100: oklch(99% 0.006 84);
+  --color-base-200: oklch(96.5% 0.016 78);
+  --color-base-300: oklch(89% 0.030 78);
+  --color-base-content: oklch(25% 0.018 56);
+
+  /* The one lamp. Deeper than the display bronze so white labels clear 4.5:1. */
+  --color-primary: oklch(54% 0.082 60);
+  --color-primary-content: oklch(99% 0.006 84);
+  --color-secondary: oklch(50% 0.070 58);
+  --color-secondary-content: oklch(99% 0.006 84);
+  --color-accent: oklch(65% 0.076 62);
+  --color-accent-content: oklch(20% 0.010 60);
+
+  /* The house, for inverted blocks on a paper page. */
+  --color-neutral: oklch(18% 0.008 62);
+  --color-neutral-content: oklch(93% 0.005 72);
+
+  /* Status, not brand: reported at the same volume as everything else. */
+  --color-info: oklch(52% 0.024 60);
+  --color-info-content: oklch(99% 0.006 84);
+  --color-success: oklch(52% 0.072 148);
+  --color-success-content: oklch(99% 0.006 84);
+  --color-warning: oklch(70% 0.105 72);
+  --color-warning-content: oklch(20% 0.010 60);
+  --color-error: oklch(52% 0.130 27);
+  --color-error-content: oklch(99% 0.006 84);
+
+  --radius-selector: 9999px;
+  --radius-field: 0.75rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+
+  /* House: near-black with a warm bias, never neutral or cool. */
+  --color-base-100: oklch(17.5% 0.008 62);
+  --color-base-200: oklch(11.5% 0.005 62);
+  --color-base-300: oklch(27% 0.012 66);
+  --color-base-content: oklch(93% 0.005 72);
+
+  /* Bronze Lit — bronze has to rise to stay legible on a dark house surface. */
+  --color-primary: oklch(76% 0.072 72);
+  --color-primary-content: oklch(16% 0.008 60);
+  --color-secondary: oklch(65% 0.076 62);
+  --color-secondary-content: oklch(15% 0.008 60);
+  --color-accent: oklch(84% 0.040 70);
+  --color-accent-content: oklch(15% 0.008 60);
+
+  --color-neutral: oklch(9% 0.004 60);
+  --color-neutral-content: oklch(93% 0.005 72);
+
+  --color-info: oklch(70% 0.022 62);
+  --color-info-content: oklch(12% 0.005 60);
+  --color-success: oklch(70% 0.075 150);
+  --color-success-content: oklch(14% 0.008 60);
+  --color-warning: oklch(80% 0.095 78);
+  --color-warning-content: oklch(14% 0.008 60);
+  --color-error: oklch(66% 0.135 26);
+  --color-error-content: oklch(14% 0.008 60);
+
+  --radius-selector: 9999px;
+  --radius-field: 0.75rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* The Overlay Scrim Rule: anything covering the room keeps the room faintly
+   visible underneath, so nobody loses their place. */
+:where(.modal) {
+  background-color: oklch(0% 0 0 / 0.62);
+  backdrop-filter: blur(6px);
+}
+
+/* daisyUI focuses fields in the current text colour, which lands white on the
+   house theme. Focus is the one lamp too — it should read as Presento. */
+:where(.input, .textarea, .select, .file-input):focus,
+:where(.input, .textarea, .select, .file-input):focus-within {
+  outline-color: var(--color-primary);
+}
 
 @theme {
   --animate-fade-down: fade-down 0.5s ease-out forwards;
