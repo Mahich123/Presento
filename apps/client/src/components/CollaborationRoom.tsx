@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { authClient } from "../lib/auth-client"
 import { client } from "../utils/honoClient"
 import userAuth from "../utils/userSession"
+import { useLinkedAccounts } from "../hooks/useLinkedAccounts"
+import { isGoogleExpired, useGoogleAccessToken } from "../hooks/useGoogleAccessToken"
 import { nanoid } from "nanoid"
 import RoomContent from "./RoomContent"
 import RoomQR from "./RoomQR"
@@ -66,9 +68,15 @@ let justLeftRoomId = ''
 
 export default function CollaborationRoom() {
     const navigate = useNavigate()
-    const [hasGoogle, setHasGoogle] = useState(false)
-    const [accessToken, setAccessToken] = useState<string>('')
+    const dialogId = useId()
     const { session } = userAuth()
+    const { data: accounts } = useLinkedAccounts(session?.user.id)
+    const googleLinked = accounts?.some((acc) => acc.providerId === 'google') ?? false
+    const googleToken = useGoogleAccessToken(session?.user.id, googleLinked)
+    // Only a dead refresh token drops the connected state; a transient failure
+    // keeps it, so the host can simply retry instead of relinking.
+    const hasGoogle = googleLinked && !isGoogleExpired(googleToken.error)
+    const accessToken = hasGoogle ? googleToken.data ?? '' : ''
     const [roomId, setRoomId] = useState<string>("")
     const [, setRespData] = useState<string>("")
     const [pickerApiLoaded, setPickerApiLoaded] = useState(false)
@@ -221,25 +229,6 @@ export default function CollaborationRoom() {
     }, [session?.session.token])
 
 
-    const checkGoogleLinked = async () => {
-        const currentUserId = session?.user.id
-
-        if (!currentUserId) {
-            return "user not available"
-        }
-        const res = await client.api.getallAccounts[':userId'].$get({
-            param: { userId: session.user.id }
-        })
-        const data = await res.json()
-
-        const googleAccount = Array.isArray(data)
-            ? data.find((acc) => acc.providerId === 'google')
-            : undefined
-        const token = googleAccount?.accessToken ?? ''
-        setHasGoogle(Boolean(googleAccount))
-        setAccessToken(token)
-    }
-
     useEffect(() => {
         const script = document.createElement('script');
         script.src = 'https://apis.google.com/js/api.js';
@@ -256,12 +245,6 @@ export default function CollaborationRoom() {
         };
     }, []);
 
-
-    useEffect(() => {
-        if (session?.user.id) {
-            checkGoogleLinked()
-        }
-    }, [session?.user?.id])
 
     useEffect(() => {
         if (!roomId) return
@@ -458,39 +441,28 @@ export default function CollaborationRoom() {
             return;
         }
 
-        const getToken = await client.api.linkGoogle.$get()
+        const refreshed = await googleToken.refetch()
 
-
-        if (!getToken.ok) {
+        if (refreshed.isError) {
             console.error('Failed to get fresh token from server');
-            if (getToken.status === 401) {
+            if (isGoogleExpired(refreshed.error)) {
                 // The refresh token itself is dead (revoked, or rejected by Google
-                // as unauthorized_client) — no amount of retrying will fix this.
-                // Drop the connected state so "Connect Google Drive" reappears;
-                // handleConnect silently rejoins this room after the OAuth
-                // round-trip, so this doesn't lose the room like it used to.
-                setHasGoogle(false)
-                setAccessToken('')
+                // as unauthorized_client), so hasGoogle flips off and "Connect
+                // Google Drive" reappears; handleConnect silently rejoins this
+                // room after the OAuth round-trip.
                 showToast("Google connection expired. Click Connect Google Drive to relink.", 'error')
             } else {
-                // A transient refresh failure shouldn't drop the connected state and
-                // force a full reconnect. Let the user simply retry.
                 showToast("Couldn't refresh Google access. Please try again.", 'error')
             }
             return;
         }
 
-        const data = await getToken.json()
-
-        const newAccessToken = data.accessToken;
+        const newAccessToken = refreshed.data;
 
         if (!newAccessToken) {
             console.error('No access token received from server');
             return;
         }
-
-        // Update the access token state with the fresh token
-        setAccessToken(newAccessToken);
 
         const google = (window as Window & { google?: any }).google;
         if (!google?.picker) {
@@ -685,9 +657,9 @@ export default function CollaborationRoom() {
                 </div>
             }
 
-            <dialog className={`modal ${showModal ? 'modal-open' : ''}`}>
+            <dialog aria-labelledby={`${dialogId}-open`} className={`modal ${showModal ? 'modal-open' : ''}`}>
                 <div className="modal-box mx-4 w-full max-w-md border border-base-300 bg-base-100">
-                    <h3 className="text-lg font-bold">Your room is open</h3>
+                    <h3 id={`${dialogId}-open`} className="text-lg font-bold">Your room is open</h3>
                     <p className="mt-1 text-sm text-base-content/70">
                         Read the code out, or let the class scan it.
                     </p>
@@ -756,9 +728,9 @@ export default function CollaborationRoom() {
             </dialog>
 
           
-            <dialog className={`modal ${setToReview ? 'modal-open' : ''}`}>
+            <dialog aria-labelledby={`${dialogId}-keep`} className={`modal ${setToReview ? 'modal-open' : ''}`}>
                 <div className="modal-box w-full max-w-md mx-4 border border-base-300 bg-base-100">
-                    <h3 className="font-bold text-lg">Keep this question set?</h3>
+                    <h3 id={`${dialogId}-keep`} className="font-bold text-lg">Keep this question set?</h3>
                     <p className="py-3 text-sm text-base-content/70">
                         You used <strong>{setToReview?.title || 'Untitled set'}</strong> in this session.
                         Keep it for next time, or delete it now?
@@ -781,9 +753,9 @@ export default function CollaborationRoom() {
                 </div>
             </dialog>
 
-            <dialog className={`modal ${showLeaveConfirmModal ? 'modal-open' : ''}`}>
+            <dialog aria-labelledby={`${dialogId}-leave`} className={`modal ${showLeaveConfirmModal ? 'modal-open' : ''}`}>
                 <div className="modal-box w-full max-w-md mx-4 border border-base-300 bg-base-100">
-                    <h3 className="font-bold text-lg">Leave room?</h3>
+                    <h3 id={`${dialogId}-leave`} className="font-bold text-lg">Leave room?</h3>
                     <p className="py-3 text-sm text-base-content/70">
                         Are you sure you want to leave this room?
                     </p>

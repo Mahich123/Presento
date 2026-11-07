@@ -4,8 +4,8 @@ import type { Db } from "../db";
 import { session as authSession, user } from "../db/schema";
 
 /**
- * PartyKit and the websocket clients cannot send cookies, so they authenticate
- * with the session token as a bearer instead.
+ * Websocket clients cannot send cookies, so they authenticate with the session
+ * token as a bearer instead.
  */
 export function bearerToken(authHeader: string | undefined): string | null {
   return authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
