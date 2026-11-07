@@ -1,7 +1,7 @@
 {
   "name": "presento",
   "scripts": {
-    "dev": "bun run --hot src/bun.ts",
+    "dev": "wrangler dev --port 4002",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -14,9 +14,11 @@
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "^0.44.7",
     "openai": "^6.48.0",
+    "partyserver": "^0.5.10",
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260710.1",
     "drizzle-kit": "^0.31.6",
     "wrangler": "^4.111.0"
   }

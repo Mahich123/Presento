@@ -154,10 +154,11 @@ function WebSocketConnection({
   onConnectionError?: (message: string) => void;
   onConnectionClose?: (closeCode?: number) => void;
 }) {
-  const partyKitConnect = import.meta.env.VITE_PARTYKIT_SERVER_URL
-
   const ws = usePartySocket({
-    host: partyKitConnect,
+    // Rooms are a Durable Object inside the API Worker, so the socket goes to
+    // the same host as every other API call.
+    host: new URL(BASE_URL).host,
+    party: "room",
     room: roomId,
     query: { token: sessionToken },
 
@@ -809,50 +810,25 @@ function RoomContent({
   }, [currentSlide, pdfDoc, roomRole])
 
   useEffect(() => {
-    if (useMockApi) {
-      setSocketConnected(true)
-      setUserCount(3)
-      setActivePresentationId('mock-presentation-id')
-      setTimeout(() => {
-        const mockSlides: MockSlideProps[] = [
-          { pageId: 'mock-page-1', title: 'Slide 1' },
-          { pageId: 'mock-page-2', title: 'Slide 2' },
-          { pageId: 'mock-page-3', title: 'Slide 3' }
-        ]
-        setSlideContent(mockSlides)
+    if (!useMockApi) return
+    setSocketConnected(true)
+    setUserCount(3)
+    setActivePresentationId('mock-presentation-id')
+    const timer = setTimeout(() => {
+      const mockSlides: MockSlideProps[] = [
+        { pageId: 'mock-page-1', title: 'Slide 1' },
+        { pageId: 'mock-page-2', title: 'Slide 2' },
+        { pageId: 'mock-page-3', title: 'Slide 3' }
+      ]
+      setSlideContent(mockSlides)
 
-        setChatMessages([
-          { id: '1', userId: 'user1', userName: 'Alice', message: 'Hello everyone!', timestamp: Date.now() - 60000 },
-          { id: '2', userId: 'user2', userName: 'Bob', message: 'Hi Alice!', timestamp: Date.now() - 30000 },
-        ])
-      }, 500)
-    }
+      setChatMessages([
+        { id: '1', userId: 'user1', userName: 'Alice', message: 'Hello everyone!', timestamp: Date.now() - 60000 },
+        { id: '2', userId: 'user2', userName: 'Bob', message: 'Hi Alice!', timestamp: Date.now() - 30000 },
+      ])
+    }, 500)
+    return () => clearTimeout(timer)
   }, [])
-
-  useEffect(() => {
-    if (!roomId || !sessionToken || useMockApi) return
-    const controller = new AbortController()
-    fetch(`${BASE_URL}/api/party/session-user?roomId=${encodeURIComponent(roomId)}`, {
-      headers: { Authorization: `Bearer ${sessionToken}` },
-      signal: controller.signal
-    })
-      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
-      .then(({ ok, data }) => {
-        if (!ok) {
-          console.warn('Session role check failed:', data)
-          return
-        }
-        if (data?.role && data.role !== roomRole) {
-          console.warn('Role mismatch between client and backend:', { client: roomRole, backend: data.role })
-        }
-      })
-      .catch((err) => {
-        if (err?.name !== 'AbortError') {
-          console.warn('Session role check error:', err)
-        }
-      })
-    return () => controller.abort()
-  }, [roomId, sessionToken, roomRole])
 
 
   useEffect(() => {
@@ -1173,6 +1149,7 @@ function RoomContent({
                   className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
                   onClick={() => setCurrentSlide(prev => Math.max(0, prev - 1))}
                   disabled={currentSlide === 0}
+                  aria-label="Previous slide"
                 >
                   ❮
                 </button>
@@ -1180,6 +1157,7 @@ function RoomContent({
                   className="btn btn-circle btn-sm sm:btn-md bg-white/80 hover:bg-white pointer-events-auto dark:bg-gray-800 dark:text-gray-100"
                   onClick={() => setCurrentSlide(prev => Math.min(totalSlides - 1, prev + 1))}
                   disabled={currentSlide >= totalSlides - 1}
+                  aria-label="Next slide"
                 >
                   ❯
                 </button>
@@ -1219,8 +1197,11 @@ function RoomContent({
           </button>
 
           {/* Backdrop */}
+          {/* A pointer shortcut for the panel's own "Close chat" button, so it is
+              hidden from assistive tech rather than made a second control. */}
           {chatOpen && (
             <div
+              aria-hidden="true"
               className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
               onClick={() => setChatOpen(false)}
             />
@@ -1384,6 +1365,7 @@ function RoomContent({
                         <button
                           className="p-1.5 -m-1.5 tooltip tooltip-bottom"
                           data-tip={mutedUsers.has(msg.userId) ? 'unmute user' : 'mute user'}
+                          aria-label={mutedUsers.has(msg.userId) ? 'Unmute user' : 'Mute user'}
                           onClick={() => handleMuteUser(msg.userId)}
                         >
                           <Ban className={`size-4 ${mutedUsers.has(msg.userId) ? 'text-red-600' : 'text-gray-400'}`} />
@@ -1424,6 +1406,7 @@ function RoomContent({
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
                     placeholder="Type a message..."
+                    aria-label="Chat message"
                     className="flex-1 min-w-0 input input-bordered input-sm bg-white text-gray-900 placeholder-gray-400"
                   />
                   <button

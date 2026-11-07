@@ -27,7 +27,7 @@ Requires [Bun](https://bun.sh).
 bun install
 ```
 
-Create the `.env` files (see [Environment](#environment)), then run all three services:
+Create the `.env` files (see [Environment](#environment)), then run both services:
 
 ```sh
 bun run dev:all
@@ -36,9 +36,12 @@ bun run dev:all
 Or individually:
 
 ```sh
-bun run dev:backend    # Hono on :4002
+bun run dev:backend    # Worker on :4002 (wrangler dev): Hono API + realtime rooms
 bun run dev:frontend   # Vite on :5173
-bun run dev:party      # PartyKit on :1999
 ```
+
+The backend reads its local secrets from `apps/server/.dev.vars`. Wrangler also
+serves `apps/client/dist`, so build the client once (`bun run --cwd apps/client build`)
+before the first `dev:backend`.
 
 Open http://localhost:5173.

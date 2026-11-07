@@ -6,10 +6,13 @@ import { ThemeProvider } from './lib/ThemeContext'
 
 import { routeTree } from './routeTree.gen'
 import { createRouter, RouterProvider } from '@tanstack/react-router'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const router = createRouter({
   routeTree,
 })
+
+const queryClient = new QueryClient()
 
 declare module '@tanstack/react-router' {
   interface Register {
@@ -39,7 +42,9 @@ enableMocking().then(() => {
         sourceRoot="/home/mahi/web/presento/apps/client"
       >
         <ThemeProvider>
-          <RouterProvider router={router} />
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
         </ThemeProvider>
       </AIE>
     </StrictMode>,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -65,6 +65,7 @@ function QuestionEditor({
   onRemove: () => void;
   canRemove: boolean;
 }) {
+  const fieldId = useId();
   const [open, setOpen] = useState(!draft.question.trim());
   const ready = isQuestionReady(draft);
 
@@ -126,10 +127,11 @@ function QuestionEditor({
         <div className="px-3.5 pb-4 pt-4 space-y-4 border-t border-base-200 bg-base-200/25">
           {/* Question */}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+            <label htmlFor={`${fieldId}-question`} className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
               Question
             </label>
             <input
+              id={`${fieldId}-question`}
               type="text"
               value={draft.question}
               onChange={(e) => onChange({ ...draft, question: e.target.value })}
@@ -141,11 +143,11 @@ function QuestionEditor({
           </div>
 
           {/* Answers */}
-          <div className="space-y-2">
+          <div role="group" aria-labelledby={`${fieldId}-answers`} className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+              <span id={`${fieldId}-answers`} className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
                 Answers
-              </label>
+              </span>
               <span className="text-[11px] text-base-content/40">
                 tap the check to mark the correct one
               </span>
@@ -174,6 +176,7 @@ function QuestionEditor({
                     onChange={(e) => setOption(i, e.target.value)}
                     maxLength={100}
                     placeholder={`Answer ${letter}`}
+                    aria-label={`Answer ${letter}`}
                     className="flex-1 min-w-0 bg-transparent text-sm outline-none py-1.5"
                   />
                   {/* Ticking an answer marks it correct — no separate quiz toggle. */}
@@ -265,6 +268,7 @@ function GeneratePanel({
   onCancel: () => void;
   deckLabel: string;
 }) {
+  const fieldId = useId();
   const [saved] = useState(() => loadAIConfig());
   // Default to the free option — it's the only one that works without a card.
   const [provider, setProvider] = useState<AIProvider>(saved?.provider ?? "openrouter");
@@ -368,10 +372,10 @@ function GeneratePanel({
 
       {/* Provider */}
       <div className="space-y-1.5">
-        <label className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+        <span id={`${fieldId}-provider`} className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
           Generate using
-        </label>
-        <div className="inline-flex rounded-lg border border-base-300 overflow-hidden">
+        </span>
+        <div role="group" aria-labelledby={`${fieldId}-provider`} className="inline-flex rounded-lg border border-base-300 overflow-hidden">
           {providerList().map((p) => (
             <button
               key={p}
@@ -389,10 +393,11 @@ function GeneratePanel({
 
       {/* Key */}
       <div className="space-y-1.5">
-        <label className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+        <label htmlFor={`${fieldId}-key`} className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
           API key
         </label>
         <input
+          id={`${fieldId}-key`}
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
@@ -495,14 +500,11 @@ export default function QuestionSetManager({
   canGenerate = false,
   deckLabel = "deck",
 }: QuestionSetManagerProps) {
-  const [sets, setSets] = useState<QuestionSet[]>([]);
+  const fieldId = useId();
+  const [sets, setSets] = useState<QuestionSet[]>(loadSets);
   const [editing, setEditing] = useState<QuestionSet | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-
-  useEffect(() => {
-    setSets(loadSets());
-  }, []);
 
   const commit = (set: QuestionSet) => {
     setSets(saveSet(set));
@@ -541,6 +543,7 @@ export default function QuestionSetManager({
               onChange={(e) => setEditing({ ...editing, title: e.target.value })}
               maxLength={80}
               placeholder="Set name — e.g. Week 3 revision"
+              aria-label="Set name"
               className="flex-1 input input-bordered input-sm font-semibold"
             />
           </div>
@@ -684,9 +687,9 @@ export default function QuestionSetManager({
         </>
       )}
 
-      <dialog className={`modal ${confirmDelete ? "modal-open" : ""}`}>
+      <dialog aria-labelledby={`${fieldId}-delete`} className={`modal ${confirmDelete ? "modal-open" : ""}`}>
         <div className="modal-box w-full max-w-md mx-4 bg-base-100">
-          <h3 className="font-bold text-lg">Delete this set?</h3>
+          <h3 id={`${fieldId}-delete`} className="font-bold text-lg">Delete this set?</h3>
           <p className="py-3 text-sm text-base-content/70">
             This can't be undone — the set only exists in this browser.
           </p>

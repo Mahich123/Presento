@@ -72,6 +72,7 @@ function PollForm({
         maxLength={200}
         autoFocus
         placeholder="Ask a question…"
+        aria-label="Question"
         className="w-full input input-bordered input-sm bg-white text-gray-900 placeholder-gray-400"
       />
 

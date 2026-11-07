@@ -12,9 +12,21 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = "../client/dist"
 not_found_handling = "single-page-application"
-# Without this the SPA fallback would answer /api/* with index.html. "/api" is
+# Without this the SPA fallback would answer /api/* with index.html, and the
+# room websockets under /parties/* would never reach the Worker. "/api" is
 # listed separately because the wildcard does not cover the bare path.
-run_worker_first = ["/api", "/api/*"]
+run_worker_first = ["/api", "/api/*", "/parties/*"]
+
+# Realtime rooms. Each room code is one Durable Object instance holding that
+# room's slide, poll and roster state. The binding name decides the URL:
+# partyserver kebab-cases it, so ROOM is served at /parties/room/:roomId.
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
 
 [vars]
 # Non-sensitive vars — safe to commit.
@@ -23,4 +35,3 @@ BACKEND_BASE_URL = "https://presento-server.presento.workers.dev"
 # Same origin as the app now. Only actually used by the CORS middleware in local
 # dev, where the client (:5173) and server (:4002) are on different ports.
 TRUSTED_ORIGINS = "https://presento-server.presento.workers.dev"
-PARTYKIT_SERVER_URL = "https://my-partykit-app.mahich123.partykit.dev"

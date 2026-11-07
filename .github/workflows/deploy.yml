@@ -20,7 +20,7 @@ jobs:
         # Vite inlines VITE_* at build time and does NOT error on a missing one:
         # it silently bakes in `undefined` and the deploy succeeds broken. Fail loudly instead.
         run: |
-          for v in VITE_BACKEND_BASE_URL VITE_BACKEND_API_URL VITE_PARTYKIT_SERVER_URL \
+          for v in VITE_BACKEND_BASE_URL VITE_BACKEND_API_URL \
                    VITE_CLIENT_URL VITE_DEVELOPER_KEY; do
             if [ -z "${!v}" ]; then
               echo "::error::$v is empty. Set it under Settings → Secrets and variables → Actions."
@@ -31,28 +31,15 @@ jobs:
         env:
           VITE_BACKEND_BASE_URL: ${{ vars.VITE_BACKEND_BASE_URL }}
           VITE_BACKEND_API_URL: ${{ vars.VITE_BACKEND_API_URL }}
-          VITE_PARTYKIT_SERVER_URL: ${{ vars.VITE_PARTYKIT_SERVER_URL }}
           VITE_CLIENT_URL: ${{ vars.VITE_CLIENT_URL }}
           VITE_USE_MOCK_API: "false"
           VITE_DEVELOPER_KEY: ${{ secrets.VITE_DEVELOPER_KEY }}
-      - name: Deploy Worker (API + client assets)
+      # Also ships the realtime rooms: they're a Durable Object in this Worker,
+      # and wrangler applies the [[migrations]] in wrangler.toml on deploy.
+      - name: Deploy Worker (API + realtime rooms + client assets)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/server
           command: deploy
-
-  # ── Realtime → PartyKit ─────────────────────────────────────────
-  deploy-partykit:
-    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - name: Deploy PartyKit
-        run: bunx partykit deploy
-        env:
-          PARTYKIT_TOKEN: ${{ secrets.PARTYKIT_TOKEN }}
-          PARTYKIT_LOGIN: ${{ secrets.PARTYKIT_LOGIN }}

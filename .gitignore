@@ -1,6 +1,5 @@
 # deps
 node_modules/
-.partykit
 .env
 **/drizzle/
 design.pen

@@ -1,5 +1,9 @@
-import type * as Party from "partykit/server";
 import { Filter } from "bad-words";
+import { Server, type Connection, type ConnectionContext, type WSMessage } from "partyserver";
+
+import { createDb } from "../db";
+import type { ENV } from "../lib/env";
+import { closeRoom, departRoom, markPresent, resolveRoomUser, toggleMute } from "../lib/rooms";
 
 const filter = new Filter();
 
@@ -45,7 +49,17 @@ interface QueuedQuestion {
   durationMs: number | null;
 }
 
-export default class Server implements Party.Server {
+/**
+ * One live room. partyserver routes `/parties/room/:roomId` to the Durable
+ * Object named after the room code, so every socket for a room lands here.
+ */
+export class Room extends Server<ENV> {
+  // Everything below lives in memory and the poll, host and grace timers are
+  // plain setTimeouts, so the object must stay resident while sockets are open.
+  static options = { hibernate: false };
+
+  readonly db = createDb(this.env);
+
   slides: { pageNumber: number; imageUrl: string; pageId: string }[] = [];
   presentationId: string | null = null;
   pdfFileId: string | null = null;
@@ -76,8 +90,6 @@ export default class Server implements Party.Server {
   disconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   readonly userGraceMs = 45_000;
 
-  constructor(readonly room: Party.Room) {}
-
   async getSlideContent(presentationId: string, token: string) {
     try {
       const slidesData: { pageNumber: number; imageUrl: string; pageId: string }[] = []
@@ -88,7 +100,7 @@ export default class Server implements Party.Server {
         }
       );
 
-      const data = await res.json();
+      const data: any = await res.json();
 
       if (!res.ok) {
         console.error("Google Slides API error:", data);
@@ -119,18 +131,6 @@ export default class Server implements Party.Server {
     }
 }
 
-  async onRequest(request: Party.Request) {
-    if (request.method === "POST") {
-      // Consume request body before responding to avoid workerd stream errors
-      await request.text();
-      return new Response(`Room ${this.room.id} created/connected via POST`, {
-        status: 200,
-      });
-    }
-
-    return new Response("Not found", { status: 404 });
-  }
-
   broadcastUserCount() {
     // Use userId when resolved; fall back to connection ID so users whose
     // session couldn't be resolved yet (backend cold-start) are still counted.
@@ -152,96 +152,30 @@ export default class Server implements Party.Server {
     this.broadcastParticipants();
   }
 
+  /**
+   * Who a session token belongs to and their standing in this room. A database
+   * error gets one retry; a token that matches no session is just null.
+   */
   async resolveUserNameFromSessionToken(token: string) {
-    const backendBaseUrl = this.getBackendBaseUrl();
-    const url = `${backendBaseUrl}/api/party/session-user?roomId=${encodeURIComponent(this.room.id)}`;
-    const headers = { Authorization: `Bearer ${token}` };
-
-    const tryFetch = async () => {
-      const response = await fetch(url, {
-        method: "GET",
-        headers,
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) {
-        console.error(`resolveUser: backend returned ${response.status}`);
-        return null;
-      }
-      const data = await response.json() as { userId?: string; userName?: string; role?: "host" | "viewer" | null; isMuted?: boolean };
-      return {
-        userId: data.userId,
-        userName: data.userName,
-        role: data.role ?? undefined,
-        isMuted: data.isMuted ?? false,
-      };
-    };
-
-    // Attempt 1
     try {
-      const result = await tryFetch();
-      if (result) return result;
+      return await resolveRoomUser(this.db, token, this.name);
     } catch (error) {
-      console.error("resolveUser attempt 1 failed:", error);
+      console.error("resolveUser failed, retrying:", error);
+      await new Promise((r) => setTimeout(r, 800));
+      return this.tryDb("resolve a user", resolveRoomUser(this.db, token, this.name));
     }
+  }
 
-    // Retry once after 800ms — handles backend cold-starts and transient errors
-    await new Promise(r => setTimeout(r, 800));
+  /**
+   * The room's database bookkeeping is best-effort: a failed call is logged and
+   * comes back as null, and never takes the live room down with it.
+   */
+  async tryDb<T>(what: string, operation: Promise<T>): Promise<T | null> {
     try {
-      return await tryFetch();
+      return await operation;
     } catch (error) {
-      console.error("resolveUser attempt 2 failed:", error);
+      console.error(`Room ${this.name}: failed to ${what}:`, error);
       return null;
-    }
-  }
-
-  async toggleMuteInBackend(hostToken: string, targetUserId: string): Promise<boolean | null> {
-    try {
-      const response = await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/mute/${targetUserId}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${hostToken}`,
-        },
-      });
-      if (!response.ok) return null;
-      const data = await response.json() as { isMuted?: boolean };
-      return data.isMuted ?? null;
-    } catch (error) {
-      console.error("Failed to toggle mute in backend:", error);
-      return null;
-    }
-  }
-
-  getBackendBaseUrl() {
-    return (
-      (this.room.env as Record<string, string>)?.BACKEND_BASE_URL || "http://localhost:4002"
-    );
-  }
-
-  async sendPresenceEvent(token: string, event: "connect" | "disconnect") {
-    try {
-      await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/presence`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ event }),
-      });
-    } catch (error) {
-      console.error(`Failed to send presence ${event} for room ${this.room.id}:`, error);
-    }
-  }
-
-  async closeRoomInBackend(token: string) {
-    try {
-      await fetch(`${this.getBackendBaseUrl()}/api/party/${this.room.id}/close`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-    } catch (error) {
-      console.error(`Failed to close room ${this.room.id} in backend:`, error);
     }
   }
 
@@ -263,13 +197,13 @@ export default class Server implements Party.Server {
     const excluded = this.pendingJoins.size
       ? [...without, ...this.pendingJoins.keys()]
       : without;
-    this.room.broadcast(msg, excluded);
+    super.broadcast(msg, excluded);
   }
 
   // Pending connections are deliberately invisible here, so every existing
   // count, roster and per-connection loop treats them as not in the room yet.
   getConnectionsWithState() {
-    return Array.from(this.room.getConnections())
+    return Array.from(this.getConnections())
       .filter((conn) => !this.pendingJoins.has(conn.id))
       .map((conn) => ({
         conn,
@@ -318,7 +252,7 @@ export default class Server implements Party.Server {
 
   // A connection's role can still be "viewer" for a few seconds after connect if the
   // backend was cold-starting when we resolved it, so re-resolve once before rejecting.
-  async requireHost(sender: Party.Connection, errorMessage: string) {
+  async requireHost(sender: Connection, errorMessage: string) {
     let effectiveState = sender.state as { role?: string; token?: string; userId?: string } | null;
     if (effectiveState?.role === "host") return effectiveState;
 
@@ -450,7 +384,7 @@ export default class Server implements Party.Server {
   // Every connection gets its own view of a poll: its own vote, and — while
   // voting is open — no tallies unless it's the host. Withholding the counts
   // here rather than in the UI is the only way viewers genuinely can't see them.
-  buildPollStateFor(userId?: string, role?: string) {
+  buildPollStateFor(userId?: string, role?: string | null) {
     const base = {
       type: "poll_state",
       eligibleVoters: this.countEligibleVoters(),
@@ -530,12 +464,9 @@ export default class Server implements Party.Server {
   async forceCloseRoom(reason: "no_participants" | "host_timeout") {
     // Don't leave a poll tick running against a room that no longer exists.
     this.clearPollTimer();
-    const connectionWithToken = this.getConnectionsWithState().find(({ state }) => !!state?.token);
-    if (connectionWithToken?.state?.token) {
-      await this.closeRoomInBackend(connectionWithToken.state.token);
-    }
+    await this.tryDb("close the room", closeRoom(this.db, this.name));
     this.broadcast(JSON.stringify({ type: "room_closed", reason }));
-    for (const connection of Array.from(this.room.getConnections())) {
+    for (const connection of Array.from(this.getConnections())) {
       connection.close(4002, reason);
     }
   }
@@ -581,7 +512,7 @@ export default class Server implements Party.Server {
     }, this.hostGraceMs);
   }
 
-  async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+  async onConnect(conn: Connection, ctx: ConnectionContext) {
     const token = new URL(ctx.request.url).searchParams.get("token");
 
     if (!token) {
@@ -613,7 +544,7 @@ export default class Server implements Party.Server {
    * broadcast, count and roster in the meantime.
    */
   holdForApproval(
-    conn: Party.Connection,
+    conn: Connection,
     token: string,
     userInfo: { userId?: string; userName?: string } | null,
   ) {
@@ -671,7 +602,7 @@ export default class Server implements Party.Server {
     clearTimeout(pending.timer);
     this.pendingJoins.delete(connId);
 
-    const conn = Array.from(this.room.getConnections()).find((c) => c.id === connId);
+    const conn = Array.from(this.getConnections()).find((c) => c.id === connId);
     if (conn) {
       conn.send(JSON.stringify({
         type: "join_denied",
@@ -693,7 +624,7 @@ export default class Server implements Party.Server {
     clearTimeout(pending.timer);
     this.pendingJoins.delete(connId);
 
-    const conn = Array.from(this.room.getConnections()).find((c) => c.id === connId);
+    const conn = Array.from(this.getConnections()).find((c) => c.id === connId);
     if (!conn) {
       // They gave up and closed the tab while the host was deciding.
       this.broadcastJoinRequests();
@@ -710,9 +641,9 @@ export default class Server implements Party.Server {
 
   /** The full join path, shared by a normal connect and a host approval. */
   async admitConnection(
-    conn: Party.Connection,
+    conn: Connection,
     token: string,
-    userInfo: Awaited<ReturnType<Server["resolveUserNameFromSessionToken"]>>,
+    userInfo: Awaited<ReturnType<Room["resolveUserNameFromSessionToken"]>>,
   ) {
     conn.setState({
       token,
@@ -743,11 +674,11 @@ export default class Server implements Party.Server {
         userId: userInfo.userId,
         userName: userInfo.userName || `User ${conn.id.slice(0, 4)}`,
       });
-      for (const connection of Array.from(this.room.getConnections())) {
+      for (const connection of Array.from(this.getConnections())) {
         if (connection.id !== conn.id) connection.send(joinMsg);
       }
       if (!wasInGracePeriod) {
-        await this.sendPresenceEvent(token, "connect");
+        await this.tryDb("record a join", markPresent(this.db, this.name, userInfo.userId));
       }
       conn.setState({
         ...(conn.state as object),
@@ -826,7 +757,7 @@ export default class Server implements Party.Server {
     const retryDelayMs = userInfo?.userId ? 800 : 3000;
     if (needsRetry) {
       setTimeout(async () => {
-        const isStillConnected = Array.from(this.room.getConnections()).some(c => c.id === conn.id);
+        const isStillConnected = Array.from(this.getConnections()).some(c => c.id === conn.id);
         if (!isStillConnected) return;
         const retryInfo = await this.resolveUserNameFromSessionToken(token);
         if (!retryInfo) return;
@@ -857,10 +788,10 @@ export default class Server implements Party.Server {
               userId: retryInfo.userId,
               userName: retryInfo.userName || `User ${conn.id.slice(0, 4)}`,
             });
-            for (const connection of Array.from(this.room.getConnections())) {
+            for (const connection of Array.from(this.getConnections())) {
               if (connection.id !== conn.id) connection.send(joinMsg);
             }
-            await this.sendPresenceEvent(token, "connect");
+            await this.tryDb("record a join", markPresent(this.db, this.name, retryInfo.userId));
             conn.setState({ ...(conn.state as object), _joinSent: true });
           }
         }
@@ -872,7 +803,7 @@ export default class Server implements Party.Server {
     }
   }
 
-  async onClose(conn: Party.Connection) {
+  async onClose(conn: Connection) {
     // Someone who gave up waiting was never admitted — drop their request and
     // refresh the host's list. No presence or lifecycle handling applies.
     const pending = this.pendingJoins.get(conn.id);
@@ -891,9 +822,8 @@ export default class Server implements Party.Server {
         connectedState?.userId === state.userId
     );
 
-    if (state?.token && state?.userId && !sameUserStillConnected) {
+    if (state?.userId && !sameUserStillConnected) {
       const userId = state.userId;
-      const token = state.token;
       const userName = state.userName;
       const role = state.role;
 
@@ -908,7 +838,7 @@ export default class Server implements Party.Server {
 
       const timer = setTimeout(async () => {
         this.disconnectTimers.delete(userId);
-        await this.sendPresenceEvent(token, "disconnect");
+        await this.tryDb("record a leave", departRoom(this.db, this.name, userId));
         await this.updateRoomLifecycle();
       }, this.userGraceMs);
 
@@ -930,7 +860,8 @@ export default class Server implements Party.Server {
     }
   }
 
-  async onMessage(message: string, sender: Party.Connection) {
+  async onMessage(sender: Connection, message: WSMessage) {
+    if (typeof message !== "string") return;
     try {
       const data = JSON.parse(message);
 
@@ -1035,31 +966,15 @@ export default class Server implements Party.Server {
         if (senderState?.role !== "host") return;
         this.broadcast(JSON.stringify(data), [sender.id]);
       } else if (data.type === "mute_user") {
-        const senderState = sender.state as { role?: string; token?: string; userId?: string } | null;
-        let effectiveState = senderState;
-        if (effectiveState?.role !== "host") {
-          if (effectiveState?.token) {
-            const freshInfo = await this.resolveUserNameFromSessionToken(effectiveState.token);
-            if (freshInfo) {
-              sender.setState({
-                token: effectiveState.token,
-                userId: freshInfo.userId,
-                userName: freshInfo.userName || `User ${sender.id.slice(0, 4)}`,
-                role: freshInfo.role || effectiveState.role || "viewer",
-                isMuted: freshInfo.isMuted ?? false,
-              });
-            }
-          }
-          effectiveState = sender.state as { role?: string; token?: string } | null;
-          if (effectiveState?.role !== "host") {
-            sender.send(JSON.stringify({ type: "error", errorCode: "unauthorized_role", message: "Only the host can mute users." }));
-            return;
-          }
-        }
+        const hostState = await this.requireHost(sender, "Only the host can mute users.");
+        const hostUserId = hostState?.userId;
         const targetUserId = data.userId as string | undefined;
-        if (!targetUserId || !effectiveState?.token) return;
+        if (!hostUserId || !targetUserId) return;
 
-        const newMuteState = await this.toggleMuteInBackend(effectiveState.token, targetUserId);
+        const newMuteState = await this.tryDb(
+          "toggle a mute",
+          toggleMute(this.db, this.name, hostUserId, targetUserId),
+        );
         if (newMuteState === null) {
           sender.send(JSON.stringify({ type: "error", message: "Failed to update mute state." }));
           return;

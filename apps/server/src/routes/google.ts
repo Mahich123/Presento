@@ -12,7 +12,7 @@ import {
   storeGoogleAccessToken,
 } from "../lib/google";
 
-/** The host's own Google connection: listing their Drive, and which providers they linked. */
+/** The signed-in user's own connections: a fresh Google token, and which providers they linked. */
 export const googleRoutes = new Hono<{ Bindings: ENV }>()
   .get("/linkGoogle", async (c) => {
     const auth = createAuth(c.env);
@@ -57,26 +57,23 @@ export const googleRoutes = new Hono<{ Bindings: ENV }>()
       accessToken = token;
     }
 
-    const data = await fetch(
-      "https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(id,name,mimeType,modifiedTime)",
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-
-    const res = await data.json();
-
-    return c.json({ res, accessToken });
+    return c.json({ accessToken });
   })
 
-  .get("/getallAccounts/:userId", async (c) => {
-    const db = createDb(c.env);
-    const userId = c.req.param("userId");
-    const accountProviders = await db
-      .select({
-        providerId: account.providerId,
-        accessToken: account.accessToken,
-      })
-      .from(account)
-      .where(eq(account.userId, userId));
+  .get("/accounts", async (c) => {
+    const auth = createAuth(c.env);
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
 
-    return c.json(accountProviders);
+    if (!session) {
+      return c.json({ error: "Not authenticated" }, 401);
+    }
+
+    // Which providers are linked, never their tokens: /linkGoogle is the one
+    // place a token leaves the server, and only to its owner.
+    const linked = await createDb(c.env)
+      .select({ id: account.id, providerId: account.providerId })
+      .from(account)
+      .where(eq(account.userId, session.user.id));
+
+    return c.json(linked);
   });

@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react"
 import { Link, useLocation } from "@tanstack/react-router"
-import { client } from "../utils/honoClient"
+import { useLinkedAccounts } from "../hooks/useLinkedAccounts"
 import userAuth from "../utils/userSession"
 import GoogleIcon from "../icons/GoogleIcon"
 import GithubIcon from "../icons/GithubIcon"
@@ -14,7 +13,7 @@ export default function Header() {
     // there is just the way back plus the theme toggle.
     const onSignupPage = useLocation({ select: (location) => location.pathname === "/signup" })
 
-    const [accounts, setAccounts] = useState<{ providerId: string }[]>([])
+    const { data: accounts = [] } = useLinkedAccounts(session?.user.id)
 
     const handleSignOut = async () => {
         try {
@@ -23,42 +22,6 @@ export default function Header() {
             console.error('Sign out error:', error)
         }
     }
-
-    // The session resolves asynchronously, so this has to re-run once the user id
-    // lands — with an empty dep array the first (signed-out) pass was the only one
-    // and the list stayed empty forever.
-    const userId = session?.user.id
-
-    useEffect(() => {
-        if (!userId) {
-            setAccounts([])
-            return
-        }
-
-        let cancelled = false
-
-        const loadLinkedAccounts = async () => {
-            try {
-                const res = await client.api.getallAccounts[':userId'].$get({
-                    param: { userId }
-                })
-                if (!res.ok) {
-                    console.warn('Failed to load linked accounts:', res.status)
-                    return
-                }
-                const data = await res.json()
-                // A stale response from a previous user must not overwrite the new one.
-                if (cancelled) return
-                if (Array.isArray(data)) setAccounts(data)
-            } catch (error) {
-                if (!cancelled) console.error('Failed to load linked accounts:', error)
-            }
-        }
-
-        loadLinkedAccounts()
-
-        return () => { cancelled = true }
-    }, [userId])
 
 
     return (
@@ -106,8 +69,8 @@ export default function Header() {
                                         <span className="text-base-content/40">None</span>
                                     ) : (
                                         <span className="flex items-center gap-x-2">
-                                            {accounts.map((acc, idx) => (
-                                                <span key={idx} className="inline-flex items-center">
+                                            {accounts.map((acc) => (
+                                                <span key={acc.id} className="inline-flex items-center">
                                                     {acc.providerId === 'github' && <GithubIcon size={20} />}
                                                     {acc.providerId === 'google' && <GoogleIcon size={20} />}
                                                 </span>
